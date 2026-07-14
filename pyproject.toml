@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "br-code-search"
+version = "0.1.0"
+description = "Local read-only B&R Automation Studio code search MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+br-code-search = "br_code_search.cli:main"
+br-code-search-mcp = "br_code_search.mcp_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/br_code_search"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -4,6 +4,8 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
+Current release: `0.4.1`.
+
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
 
@@ -87,12 +89,14 @@ Example MCP client configuration:
 `br_get_program_context` is the preferred tool before an AI writes code. It
 returns the matched source plus related `Init`, `Cyclic`, `Exit`, action,
 variable and type files from the same module directory, and any matching `.sw`
-Task assignment, within a caller-defined character budget.
+Task assignment, within a caller-defined character budget. It also returns
+declarations extracted from VAR blocks and type-reference matches against local
+or library `TYPE`/`FUNCTION_BLOCK` symbols.
 
 ## Current limits
 
 This version performs lexical search, incremental synchronization, tolerant structural parsing,
-basic `.sw` TaskClass/Task extraction and line-level identifier references. It
+basic `.sw` TaskClass/Task extraction, VAR declaration/type resolution and line-level identifier references. It
 does not claim compiler-grade AST accuracy, semantic/vector search or complete
 cross-reference analysis. Cycle values are returned only when an explicit cycle/period
 attribute exists in the source configuration. Parse fallbacks are exposed

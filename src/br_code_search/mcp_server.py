@@ -134,7 +134,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
     {
         "name": "br_get_program_context",
-        "description": "Return a source unit plus bounded sibling Init/Cyclic/Exit/action/VAR/TYP context from its module directory.",
+        "description": "Return a source unit plus bounded sibling Init/Cyclic/Exit/action/VAR/TYP context, parsed variable declarations and resolved type references.",
         "inputSchema": object_schema(
             {
                 "document_id": {"type": "integer", "minimum": 1},
@@ -314,6 +314,13 @@ class McpServer:
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     def run(self) -> None:
+        # MCP transports JSON as UTF-8 even when a Windows console defaults to a
+        # legacy code page; reconfigure so Chinese/ANSI B&R source cannot break
+        # the protocol with UnicodeEncodeError.
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except AttributeError:
+            pass
         for line in sys.stdin:
             line = line.strip()
             if not line:

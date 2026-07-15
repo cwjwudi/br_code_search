@@ -40,6 +40,38 @@ C_FUNCTION_RE = re.compile(
     r"[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\([^;]*\)\s*\{",
     re.IGNORECASE,
 )
+IEC_BUILTIN_TYPES = {
+    "ANY",
+    "ANY_BIT",
+    "ANY_INT",
+    "ANY_NUM",
+    "ANY_REAL",
+    "ANY_UNSIGNED",
+    "BOOL",
+    "BYTE",
+    "CHAR",
+    "DATE",
+    "DINT",
+    "DWORD",
+    "DT",
+    "LINT",
+    "LREAL",
+    "LWORD",
+    "REAL",
+    "SINT",
+    "STRING",
+    "TIME",
+    "TOD",
+    "UDINT",
+    "UINT",
+    "ULINT",
+    "USINT",
+    "WCHAR",
+    "WORD",
+    "WSTRING",
+    "INT",
+}
+TYPE_LIKE_SYMBOLS = {"data_type", "function_block", "function", "c_function"}
 
 
 SCHEMA = """
@@ -231,6 +263,65 @@ def parse_var_units(text: str, stem: str) -> list[ParsedUnit]:
                 units.append(_unit(lines, cursor, cursor + 1, declaration.group(1), "variable"))
         index = end
     return units
+
+
+def _strip_inline_comments(line: str) -> str:
+    line = line.split("//", 1)[0]
+    return re.sub(r"\(\*.*?\*\)", "", line).strip()
+
+
+def _type_name_from_expression(expression: str) -> str | None:
+    clean = expression.split(":=", 1)[0].strip().rstrip(";").strip()
+    clean = re.sub(r"\b(?:REFERENCE|POINTER)\s+TO\b", " ", clean, flags=re.IGNORECASE)
+    array_match = re.search(r"\bOF\s+(.+)$", clean, re.IGNORECASE)
+    if array_match:
+        clean = array_match.group(1).strip()
+    tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", clean)
+    for token in reversed(tokens):
+        upper = token.upper()
+        if upper in IEC_BUILTIN_TYPES or upper in {"ARRAY", "OF", "STRUCT"}:
+            continue
+        return token.split(".")[-1]
+    return None
+
+
+def parse_declarations(text: str, *, standalone: bool = False) -> list[dict[str, Any]]:
+    """Extract B&R VAR declarations while preserving their section and line."""
+    lines = text.splitlines()
+    declarations: list[dict[str, Any]] = []
+    has_var_header = any(
+        re.match(r"^\s*VAR(?:_[A-Z_]+)?(?:\s+\w+)?\b", _strip_inline_comments(line), re.IGNORECASE)
+        for line in lines
+    )
+    allow_standalone = standalone and not has_var_header
+    in_var = False
+    section = "VAR"
+    for index, line in enumerate(lines):
+        code = _strip_inline_comments(line)
+        header = re.match(r"^\s*(VAR(?:_[A-Z_]+)?(?:\s+\w+)?)\b", code, re.IGNORECASE)
+        if header:
+            in_var = True
+            section = header.group(1).upper().replace(" ", "_")
+            continue
+        if re.match(r"^\s*END_VAR\b", code, re.IGNORECASE):
+            in_var = False
+            continue
+        if not in_var and not allow_standalone:
+            continue
+        match = VAR_DECL_RE.match(code)
+        if not match:
+            continue
+        type_expression = match.group(2).strip()
+        declarations.append(
+            {
+                "name": match.group(1),
+                "type_expression": type_expression,
+                "type_name": _type_name_from_expression(type_expression),
+                "section": section,
+                "line": index + 1,
+            }
+        )
+    return declarations
 
 
 def parse_type_units(text: str) -> list[ParsedUnit]:
@@ -656,7 +747,7 @@ class CodeSearchIndex:
                 "schema_version": "4",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.0",
+                "tool_version": "0.4.1",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
@@ -767,7 +858,7 @@ class CodeSearchIndex:
             for project_root, project_id in list(existing_projects.items()):
                 if project_root not in project_ids:
                     connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
-            meta.update({"schema_version": "4", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.0"})
+            meta.update({"schema_version": "4", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.1"})
             connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
@@ -1144,6 +1235,31 @@ class CodeSearchIndex:
                 (primary["project_id"], int(document_id), prefix + "%"),
             ).fetchall()
             tasks = self._tasks_for_path(connection, int(primary["project_id"]), primary["relative_path"])
+            declarations: list[dict[str, Any]] = []
+            seen_declarations: set[tuple[str, str, int]] = set()
+            for row in (primary, *related):
+                path = row["relative_path"]
+                parsed = parse_declarations(row["content"], standalone=Path(path).suffix.casefold() == ".var")
+                for item in parsed:
+                    absolute_line = int(row["start_line"]) + int(item["line"]) - 1
+                    key = (path, item["name"].casefold(), absolute_line)
+                    if key in seen_declarations:
+                        continue
+                    seen_declarations.add(key)
+                    declarations.append(
+                        {
+                            **item,
+                            "document_id": int(row["id"]),
+                            "path": path,
+                            "line": absolute_line,
+                        }
+                    )
+            type_references = self._type_references_for_declarations(
+                connection,
+                int(primary["project_id"]),
+                declarations,
+                max_source_chars=max(400, min(2000, budget // 20)),
+            )
         primary_payload = self._row_payload(primary, include_source=True, max_chars=budget)
         used = len(primary_payload.get("source", ""))
         seen_paths = {primary["relative_path"]}
@@ -1163,6 +1279,8 @@ class CodeSearchIndex:
             "primary": primary_payload,
             "related_context": context,
             "tasks": tasks,
+            "declarations": declarations,
+            "type_references": type_references,
             "context_chars": used,
             "context_truncated": used >= budget,
             "note": "Related context combines directory siblings with B&R Task assignments; it is not a compiler-grade dependency graph.",
@@ -1196,6 +1314,43 @@ class CodeSearchIndex:
             if any(source_stem == candidate or source_stem.endswith("." + candidate) for candidate in candidates):
                 matches.append(dict(row))
         return matches
+
+    def _type_references_for_declarations(
+        self,
+        connection: sqlite3.Connection,
+        project_id: int,
+        declarations: list[dict[str, Any]],
+        *,
+        max_source_chars: int = 12000,
+    ) -> list[dict[str, Any]]:
+        names = sorted({item["type_name"] for item in declarations if item.get("type_name")})
+        if not names:
+            return []
+        name_params = [name.casefold() for name in names]
+        name_sql = ", ".join("?" for _ in names)
+        symbol_sql = ", ".join("?" for _ in TYPE_LIKE_SYMBOLS)
+        rows = connection.execute(
+            f"""SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
+            d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+            p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes, d.project_id
+            FROM documents d JOIN projects p ON p.id=d.project_id
+            WHERE lower(d.symbol_name) IN ({name_sql}) AND d.symbol_type IN ({symbol_sql})
+            ORDER BY CASE WHEN d.project_id=? THEN 0 ELSE 1 END,
+                     CASE d.origin WHEN 'user' THEN 0 WHEN 'library' THEN 1 ELSE 2 END,
+                     p.name, d.relative_path, d.start_line""",
+            [*name_params, *TYPE_LIKE_SYMBOLS, project_id],
+        ).fetchall()
+        grouped: dict[str, list[dict[str, Any]]] = {name.casefold(): [] for name in names}
+        for row in rows:
+            key = str(row["symbol_name"]).casefold()
+            if key in grouped and len(grouped[key]) < 2:
+                grouped[key].append(
+                    self._row_payload(row, include_source=True, max_chars=max_source_chars)
+                )
+        return [
+            {"type_name": name, "resolved": bool(grouped[name.casefold()]), "matches": grouped[name.casefold()]}
+            for name in names
+        ]
 
     def get_task_configuration(
         self, project: str, *, task_name: str | None = None, source: str | None = None
@@ -1281,9 +1436,23 @@ class CodeSearchIndex:
             ).fetchall()
         pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", re.IGNORECASE)
         references: list[dict[str, Any]] = []
+        seen_references: set[tuple[str, str, int, str]] = set()
         for row in rows:
+            declaration_by_line = {
+                int(row["start_line"]) + int(item["line"]) - 1: item
+                for item in parse_declarations(
+                    row["content"], standalone=Path(row["relative_path"]).suffix.casefold() == ".var"
+                )
+            }
             for offset, line in enumerate(row["content"].splitlines()):
                 if pattern.search(line):
+                    absolute_line = row["start_line"] + offset
+                    declaration = declaration_by_line.get(absolute_line)
+                    relation = "declaration" if declaration and declaration["name"].casefold() == name.casefold() else "use"
+                    reference_key = (row["project_name"], row["relative_path"], absolute_line, relation)
+                    if reference_key in seen_references:
+                        continue
+                    seen_references.add(reference_key)
                     references.append(
                         {
                             "document_id": row["id"],
@@ -1293,8 +1462,10 @@ class CodeSearchIndex:
                             "origin": row["origin"],
                             "symbol": row["symbol_name"],
                             "symbol_type": row["symbol_type"],
-                            "line": row["start_line"] + offset,
+                            "line": absolute_line,
                             "text": line.strip()[:500],
+                            "relation": relation,
+                            "declared_type": declaration.get("type_name") if declaration else None,
                             "quality": row["quality"],
                             "verified": bool(row["verified"]),
                             "deprecated": bool(row["deprecated"]),

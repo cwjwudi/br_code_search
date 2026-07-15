@@ -28,17 +28,25 @@
 - 以独立的 `var/project_metadata.json` 保存标记，不修改参考工程；
 - 完成 SQLite 旧索引的自动列迁移。
 
-## v0.4 — 当前版本：B&R 结构理解
+## v0.4 — 已完成：B&R 结构理解
 
 - 解析 `.sw` 中的 TaskClass/Task 与源程序归属，并保留显式周期属性；
 - 用 Task 关联补充程序上下文，同时保留目录邻居以保证向后兼容；
 - 增加 `find_references`、`get_type_definition`、`get_task_configuration` MCP 工具；
 - 提供 CLI 的 `tasks`、`type`、`references` 命令；
-- 保持变量/类型单元可检索，并为后续读写关系解析保留扩展点。
+- 从 `.var` 和 ST VAR 区块提取变量声明、类型表达式和实际行号；
+- 在程序上下文中解析到同工程或库中的 `TYPE`/`FUNCTION_BLOCK` 定义，并标注引用/声明。
+
+## v0.4.1 — 当前版本：变量类型上下文
+
+- `br_get_program_context` 返回去重后的变量声明与类型引用；
+- 类型引用优先匹配当前工程，再补充库和其他参考工程定义；
+- `br_find_references` 返回 `declaration/use`、声明类型和精确行号；
+- MCP stdio 在 Windows 默认代码页下强制使用 UTF-8，避免中文 B&R 源码导致协议中断。
 
 后续 v0.4.x 小版本继续完善：
 
-- `.var`、`.typ` 与 ST 使用关系的精细读写/类型引用解析；
+- 在 `declaration/use` 基础上区分变量读取、写入、调用和成员访问；
 - 结果去重、同文件聚合和质量标签排序；
 - AS、AR、CPU 和库版本过滤。
 

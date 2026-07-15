@@ -6,6 +6,7 @@ from pathlib import Path
 
 from br_code_search.core import (
     CodeSearchIndex,
+    parse_declarations,
     parse_software_tasks,
     parse_st_units,
     parse_type_units,
@@ -49,6 +50,14 @@ class ParserTests(unittest.TestCase):
         self.assertEqual("Cyclic#1", tasks[0]["task_class"])
         self.assertEqual(4000, tasks[0]["cycle_time_us"])
 
+    def test_variable_declaration_parser(self) -> None:
+        declarations = parse_declarations(
+            "VAR\n fbAxis : MpAxisBasic;\n values : ARRAY[1..2] OF DemoType;\nEND_VAR\n"
+        )
+        self.assertEqual(["fbAxis", "values"], [item["name"] for item in declarations])
+        self.assertEqual("MpAxisBasic", declarations[0]["type_name"])
+        self.assertEqual("DemoType", declarations[1]["type_name"])
+
     def test_cp1252_is_not_misclassified_as_gb18030(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "German.st"
@@ -85,7 +94,7 @@ class IndexTests(unittest.TestCase):
             "PROGRAM _INIT\nReady := TRUE;\nEND_PROGRAM\n", encoding="utf-8"
         )
         (module / "Variables.var").write_text(
-            "VAR\n Ready : BOOL;\nEND_VAR\n", encoding="utf-8"
+            "VAR\n Ready : BOOL;\n Demo : DemoType;\nEND_VAR\n", encoding="utf-8"
         )
         (module / "Types.typ").write_text(
             "TYPE\nDemoType : STRUCT\n Value : INT;\nEND_STRUCT;\nEND_TYPE\n", encoding="utf-8"
@@ -130,6 +139,9 @@ class IndexTests(unittest.TestCase):
         self.assertIn("Logical/Control/Init.st", paths)
         self.assertIn("Logical/Control/Variables.var", paths)
         self.assertEqual("Main", context["tasks"][0]["task_name"])
+        self.assertIn("Demo", {item["name"] for item in context["declarations"]})
+        demo_type = next(item for item in context["type_references"] if item["type_name"] == "DemoType")
+        self.assertTrue(demo_type["resolved"])
 
     def test_tasks_types_and_references(self) -> None:
         tasks = self.index.get_task_configuration("ProjectA")
@@ -139,6 +151,11 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(1, definition["count"])
         references = self.index.find_references("Ready")
         self.assertGreaterEqual(references["count"], 2)
+        self.assertIn("declaration", {item["relation"] for item in references["references"]})
+        self.assertEqual(
+            references["count"],
+            len({(item["path"], item["line"], item["relation"]) for item in references["references"]}),
+        )
 
     def test_incremental_sync_and_similar_search(self) -> None:
         first = self.index.sync(self.source)

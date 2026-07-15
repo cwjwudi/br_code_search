@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.4.4`.
+Current release: `0.4.5`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -93,6 +93,9 @@ Example MCP client configuration:
 `br_search_code` and the CLI `search` command also accept `aggregate_files` /
 `--aggregate-files` to group multiple parsed units from one source file while
 retaining their symbol and unit metadata.
+`br_get_task_configuration` and CLI `tasks` can additionally filter by the
+exact task CPU model and Automation Runtime version discovered from its nearby
+`Cpu.pkg`.
 
 `br_get_program_context` is the preferred tool before an AI writes code. It
 returns the matched source plus related `Init`, `Cyclic`, `Exit`, action,

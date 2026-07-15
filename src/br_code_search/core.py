@@ -125,7 +125,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     language TEXT,
     description TEXT NOT NULL DEFAULT '',
     number TEXT,
-    cycle_time_us INTEGER
+    cycle_time_us INTEGER,
+    cpu_model TEXT,
+    automation_runtime_version TEXT,
+    configuration_path TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_project_source ON tasks(project_id, source);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_name ON tasks(project_id, task_name COLLATE NOCASE);
@@ -537,6 +540,50 @@ def parse_project_environment(project_root: Path) -> dict[str, list[str]]:
     }
 
 
+def parse_cpu_package(path: Path) -> dict[str, str | None]:
+    """Read one B&R Cpu.pkg target's module id and Automation Runtime version."""
+    try:
+        text, _ = read_source(path)
+    except OSError:
+        return {"cpu_model": None, "automation_runtime_version": None}
+    cpu_model: str | None = None
+    ar_version: str | None = None
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        root = None
+    if root is not None:
+        for element in root.iter():
+            element_name = _xml_local_name(element.tag)
+            if element_name == "Configuration" and not cpu_model:
+                cpu_model = element.attrib.get("ModuleId")
+            elif element_name == "AutomationRuntime" and not ar_version:
+                ar_version = element.attrib.get("Version")
+            elif element_name == "Object" and not cpu_model and element.attrib.get("Type", "").casefold() == "cpu":
+                cpu_model = (element.text or "").strip() or None
+    else:
+        module_match = re.search(r"<Configuration\b[^>]*\bModuleId=\"([^\"]+)\"", text, re.IGNORECASE)
+        ar_match = re.search(r"<AutomationRuntime\b[^>]*\bVersion=\"([^\"]+)\"", text, re.IGNORECASE)
+        cpu_match = re.search(r"<Object\b[^>]*\bType=\"Cpu\"[^>]*>([^<]+)</Object>", text, re.IGNORECASE)
+        cpu_model = (module_match.group(1) if module_match else cpu_match.group(1) if cpu_match else None)
+        ar_version = ar_match.group(1) if ar_match else None
+    return {
+        "cpu_model": cpu_model.strip() if cpu_model else None,
+        "automation_runtime_version": ar_version.strip() if ar_version else None,
+    }
+
+
+def find_cpu_package(software_path: Path) -> Path | None:
+    """Find the nearest Cpu.pkg/Config.pkg associated with a .sw file."""
+    candidates: list[Path] = []
+    for parent in (software_path.parent, *software_path.parents):
+        candidates.extend([parent / "Cpu.pkg", parent / "Config.pkg"])
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def add_project_version_filters(
     filters: list[str],
     parameters: list[Any],
@@ -597,7 +644,7 @@ class CodeSearchIndex:
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(projects)").fetchall()
         }
-        migrations = {
+        project_migrations = {
             "automation_runtime_versions": "TEXT NOT NULL DEFAULT '[]'",
             "cpu_models": "TEXT NOT NULL DEFAULT '[]'",
             "quality": "TEXT NOT NULL DEFAULT 'normal'",
@@ -606,9 +653,20 @@ class CodeSearchIndex:
             "do_not_copy": "INTEGER NOT NULL DEFAULT 0",
             "notes": "TEXT NOT NULL DEFAULT ''",
         }
-        for name, definition in migrations.items():
+        for name, definition in project_migrations.items():
             if name not in columns:
                 connection.execute(f"ALTER TABLE projects ADD COLUMN {name} {definition}")
+        task_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(tasks)").fetchall()
+        }
+        task_migrations = {
+            "cpu_model": "TEXT",
+            "automation_runtime_version": "TEXT",
+            "configuration_path": "TEXT",
+        }
+        for name, definition in task_migrations.items():
+            if name not in task_columns:
+                connection.execute(f"ALTER TABLE tasks ADD COLUMN {name} {definition}")
 
     def _load_project_annotations(self) -> dict[str, dict[str, Any]]:
         if not self.project_metadata_path.exists():
@@ -746,10 +804,16 @@ class CodeSearchIndex:
             )
         if path.suffix.lower() == ".sw":
             task_rows = parse_software_tasks(text, relative_path)
+            package_path = find_cpu_package(path)
+            package_info = parse_cpu_package(package_path) if package_path else {}
+            configuration_path = (
+                package_path.relative_to(project_root).as_posix() if package_path else None
+            )
             connection.executemany(
                 """INSERT INTO tasks
-                (project_id, software_path, task_class, task_name, source, language, description, number, cycle_time_us)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (project_id, software_path, task_class, task_name, source, language, description, number,
+                 cycle_time_us, cpu_model, automation_runtime_version, configuration_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         project_id,
@@ -761,6 +825,9 @@ class CodeSearchIndex:
                         item["description"],
                         item["number"],
                         item["cycle_time_us"],
+                        package_info.get("cpu_model"),
+                        package_info.get("automation_runtime_version"),
+                        configuration_path,
                     )
                     for item in task_rows
                 ],
@@ -841,10 +908,11 @@ class CodeSearchIndex:
                 indexed_files += 1
                 indexed_documents += documents
             meta = {
-                "schema_version": "5",
+                "schema_version": "6",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.4",
+                "tool_version": "0.4.5",
+                "task_enrichment_version": "1",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
@@ -924,6 +992,7 @@ class CodeSearchIndex:
             current_keys: set[tuple[int, str]] = set()
             added = changed = skipped = 0
             documents_added = 0
+            task_enrichment_pending = meta.get("task_enrichment_version") != "1"
             for path in sorted(root.rglob("*")):
                 if not path.is_file() or not _should_index(path, root):
                     continue
@@ -939,7 +1008,9 @@ class CodeSearchIndex:
                 previous = connection.execute(
                     "SELECT raw_hash FROM source_files WHERE project_id=? AND relative_path=?", key
                 ).fetchone()
-                if previous and previous[0] == raw_hash:
+                if previous and previous[0] == raw_hash and not (
+                    task_enrichment_pending and path.suffix.casefold() == ".sw"
+                ):
                     skipped += 1
                     continue
                 if previous:
@@ -964,7 +1035,13 @@ class CodeSearchIndex:
             for project_root, project_id in list(existing_projects.items()):
                 if project_root not in project_ids:
                     connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
-            meta.update({"schema_version": "5", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.4"})
+            meta.update({
+                "schema_version": "6",
+                "source_root": str(root),
+                "indexed_at": utc_now(),
+                "tool_version": "0.4.5",
+                "task_enrichment_version": "1",
+            })
             connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
@@ -1560,7 +1637,8 @@ class CodeSearchIndex:
         for end in range(len(module_parts), 0, -1):
             candidates.append(".".join(module_parts[:end]).casefold())
         rows = connection.execute(
-            """SELECT task_class, task_name, source, software_path, language, description, number, cycle_time_us
+            """SELECT task_class, task_name, source, software_path, language, description, number, cycle_time_us,
+            cpu_model, automation_runtime_version, configuration_path
             FROM tasks WHERE project_id=? ORDER BY task_class, task_name""",
             (project_id,),
         ).fetchall()
@@ -1609,7 +1687,13 @@ class CodeSearchIndex:
         ]
 
     def get_task_configuration(
-        self, project: str, *, task_name: str | None = None, source: str | None = None
+        self,
+        project: str,
+        *,
+        task_name: str | None = None,
+        source: str | None = None,
+        cpu_model: str | None = None,
+        ar_version: str | None = None,
     ) -> dict[str, Any]:
         self._ensure_index()
         clauses = ["p.name=? COLLATE NOCASE"]
@@ -1620,10 +1704,17 @@ class CodeSearchIndex:
         if source:
             clauses.append("t.source LIKE ? COLLATE NOCASE")
             params.append(f"%{source}%")
+        if cpu_model:
+            clauses.append("t.cpu_model LIKE ? COLLATE NOCASE")
+            params.append(f"%{cpu_model}%")
+        if ar_version:
+            clauses.append("t.automation_runtime_version LIKE ? COLLATE NOCASE")
+            params.append(f"%{ar_version}%")
         with closing(self.connect()) as connection, connection:
             rows = connection.execute(
                 """SELECT t.task_class, t.task_name, t.source, t.software_path, t.language,
-                t.description, t.number, t.cycle_time_us, p.name AS project,
+                t.description, t.number, t.cycle_time_us, t.cpu_model, t.automation_runtime_version,
+                t.configuration_path, p.name AS project,
                 p.quality, p.verified, p.deprecated, p.do_not_copy
                 FROM tasks t JOIN projects p ON p.id=t.project_id
                 WHERE """ + " AND ".join(clauses) +
@@ -1634,6 +1725,7 @@ class CodeSearchIndex:
             "ok": True,
             "project": project,
             "count": len(rows),
+            "filters": {"task_name": task_name, "source": source, "cpu_model": cpu_model, "ar_version": ar_version},
             "tasks": [
                 {
                     **dict(row),
@@ -1789,9 +1881,13 @@ class CodeSearchIndex:
                     "description": item["description"],
                     "number": item["number"],
                     "cycle_time_us": item["cycle_time_us"],
+                    "cpu_model": item["cpu_model"],
+                    "automation_runtime_version": item["automation_runtime_version"],
+                    "configuration_path": item["configuration_path"],
                 }
                 for item in connection.execute(
-                    """SELECT task_class, task_name, source, software_path, language, description, number, cycle_time_us
+                    """SELECT task_class, task_name, source, software_path, language, description, number, cycle_time_us,
+                    cpu_model, automation_runtime_version, configuration_path
                     FROM tasks WHERE project_id=? ORDER BY software_path, task_class, task_name LIMIT 500""",
                     (row["id"],),
                 )

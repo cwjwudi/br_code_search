@@ -115,6 +115,10 @@ class IndexTests(unittest.TestCase):
             """<Software><TaskClass Name=\"Cyclic#1\"><Task Name=\"Main\" Source=\"Control.Cyclic.prg\" CycleTimeUs=\"4000\" /></TaskClass></Software>""",
             encoding="utf-8",
         )
+        (self.project / "Cpu.pkg").write_text(
+            """<Cpu><Configuration ModuleId=\"X20CP1585\"><AutomationRuntime Version=\"H4.93\" /></Configuration></Cpu>""",
+            encoding="utf-8",
+        )
         library = self.project / "Logical" / "Libraries" / "Vendor"
         library.mkdir(parents=True)
         (library / "Vendor.fun").write_text(
@@ -175,6 +179,10 @@ class IndexTests(unittest.TestCase):
         tasks = self.index.get_task_configuration("ProjectA")
         self.assertEqual(1, tasks["count"])
         self.assertEqual(4000, tasks["tasks"][0]["cycle_time_us"])
+        self.assertEqual("X20CP1585", tasks["tasks"][0]["cpu_model"])
+        self.assertEqual("H4.93", tasks["tasks"][0]["automation_runtime_version"])
+        filtered_tasks = self.index.get_task_configuration("ProjectA", cpu_model="X20CP1585", ar_version="H4.93")
+        self.assertEqual(1, filtered_tasks["count"])
         definition = self.index.get_type_definition("DemoType")
         self.assertEqual(1, definition["count"])
         references = self.index.find_references("Ready")

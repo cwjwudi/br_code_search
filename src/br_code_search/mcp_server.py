@@ -174,6 +174,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "project": {"type": "string", "minLength": 1},
                 "task_name": {"type": "string", "minLength": 1},
                 "source": {"type": "string", "minLength": 1},
+                "cpu_model": {"type": "string", "minLength": 1},
+                "ar_version": {"type": "string", "minLength": 1},
             },
             ["project"],
         ),
@@ -297,6 +299,8 @@ class McpServer:
                 arguments["project"],
                 task_name=arguments.get("task_name"),
                 source=arguments.get("source"),
+                cpu_model=arguments.get("cpu_model"),
+                ar_version=arguments.get("ar_version"),
             ),
             "br_get_type_definition": lambda: self.index.get_type_definition(
                 arguments["type_name"], project=arguments.get("project")

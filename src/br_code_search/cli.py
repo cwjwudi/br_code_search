@@ -105,6 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
     tasks.add_argument("project")
     tasks.add_argument("--task-name")
     tasks.add_argument("--source")
+    tasks.add_argument("--cpu-model")
+    tasks.add_argument("--ar-version")
 
     type_definition = subparsers.add_parser("type", help="Get a TYPE declaration")
     type_definition.add_argument("type_name")
@@ -194,7 +196,11 @@ def main(argv: list[str] | None = None) -> int:
             result = index.project_overview(args.project)
         elif args.command == "tasks":
             result = index.get_task_configuration(
-                args.project, task_name=args.task_name, source=args.source
+                args.project,
+                task_name=args.task_name,
+                source=args.source,
+                cpu_model=args.cpu_model,
+                ar_version=args.ar_version,
             )
         elif args.command == "type":
             result = index.get_type_definition(args.type_name, project=args.project)

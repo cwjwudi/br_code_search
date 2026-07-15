@@ -55,16 +55,23 @@
 - `search`、`similar`、`find_symbol` 支持 AS/AR/CPU/库版本过滤；
 - 默认检索排序优先 `gold`、已验证项目和用户工程代码。
 
-## v0.4.4 — 当前版本：同文件聚合
+## v0.4.4 — 已完成：同文件聚合
 
 - `br_search_code`/CLI 支持可选的同文件聚合；
 - 聚合结果保留文件主单元、全部符号摘要、文档 ID 和受限源码单元；
 - 默认仍返回符号级结果，保证已有 MCP 客户端兼容。
 
+## v0.4.5 — 当前版本：Task 目标关联
+
+- 每条 `.sw` Task 关联最近的 `Cpu.pkg`；
+- 返回精确的 CPU ModuleId、Automation Runtime 版本和配置包路径；
+- `get_task_configuration`/CLI `tasks` 支持 CPU 与 AR 过滤；
+- 旧索引自动回填 Task 目标元数据，后续同步不重复扫描未变化的 `.sw`。
+
 后续 v0.4.x 小版本继续完善：
 
 - 多文件结果的去重、同文件聚合默认策略和质量标签评测；
-- AS/AR/CPU 配置之间的精确目标关联。
+- 多目标工程的 CPU 配置选择和质量评测集。
 
 ## v0.5 — 语义检索
 

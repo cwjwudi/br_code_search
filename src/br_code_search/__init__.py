@@ -1,3 +1,3 @@
 """B&R Automation Studio source indexing and MCP retrieval."""
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"

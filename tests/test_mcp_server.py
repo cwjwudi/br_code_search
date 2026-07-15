@@ -107,10 +107,14 @@ class McpServerTests(unittest.TestCase):
                     "jsonrpc": "2.0",
                     "id": 7,
                     "method": "tools/call",
-                    "params": {"name": "br_get_task_configuration", "arguments": {"project": "Sample"}},
+                    "params": {
+                        "name": "br_get_task_configuration",
+                        "arguments": {"project": "Sample", "cpu_model": "X20CP1585", "ar_version": "H4.93"},
+                    },
                 }
             )
             self.assertEqual(1, tasks["result"]["structuredContent"]["count"])
+            self.assertEqual("X20CP1585", tasks["result"]["structuredContent"]["tasks"][0]["cpu_model"])
 
             type_result = server.handle(
                 {

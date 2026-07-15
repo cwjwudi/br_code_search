@@ -279,6 +279,15 @@ class IndexTests(unittest.TestCase):
         self.assertGreater(second["embedding_cache_hits"], 0)
         self.assertEqual(0, second["embedding_documents_encoded"])
         self.assertTrue(all("hybrid_score" in item for item in second["results"]))
+        if self.index.qdrant_status()["available"]:
+            exported = self.index.export_qdrant(
+                path=Path(self.temp.name) / "qdrant",
+                collection="test",
+                backend="hashing",
+                max_documents=2,
+                recreate=True,
+            )
+            self.assertEqual(2, exported["points_written"])
 
     def test_function_block_similarity_is_type_filtered(self) -> None:
         result = self.index.find_similar_function_block("MpAxisBasic", include_source=False)

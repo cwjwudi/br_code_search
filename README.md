@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.7.0`.
+Current release: `0.8.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -31,6 +31,8 @@ python -m br_code_search.cli index --source C:\Users\BR\code_base
 python -m br_code_search.cli sync --source C:\Users\BR\code_base
 python -m br_code_search.cli status
 python -m br_code_search.cli embedding-status --backend hashing
+python -m br_code_search.cli qdrant-status
+python -m br_code_search.cli qdrant-export --path var/qdrant --collection br_code_search --max-documents 50000
 python -m br_code_search.cli record-validation ProjectName --kind build --status passed --source "Automation Studio"
 python -m br_code_search.cli compile-history ProjectName
 python -m br_code_search.cli search-build-errors "E123"
@@ -90,6 +92,8 @@ Example MCP client configuration:
 - `br_index_codebase`: synchronize or rebuild the local index from the configured source root
 - `br_get_index_status`: return index statistics and configured paths
 - `br_get_embedding_status`: check optional local embedding runtime availability
+- `br_get_qdrant_status`: check optional Qdrant client availability
+- `br_export_qdrant`: export cached vectors and B&R metadata to local or remote Qdrant
 - `br_record_project_validation`: record external build/field/version feedback outside the source repository
 - `br_get_compile_history`: return recorded build results and diagnostics for a project
 - `br_search_build_errors`: search recorded build errors/warnings across projects
@@ -179,3 +183,8 @@ python -m br_code_search.cli hybrid "fault restart timeout" `
 
 Vectors are cached in the index by document content hash and backend key, so
 unchanged documents are not re-encoded on later calls.
+
+Qdrant is an optional external vector sink. Install it with
+`python -m pip install -e ".[qdrant]"`; the export stores vectors and retrieval
+metadata while source text remains in SQLite. Local Qdrant mode is convenient
+for smoke tests; use a Qdrant server URL for large production collections.

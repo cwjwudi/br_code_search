@@ -156,6 +156,31 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "br_get_qdrant_status",
+        "description": "Check optional qdrant-client availability without opening a Qdrant connection.",
+        "inputSchema": object_schema({}),
+    },
+    {
+        "name": "br_export_qdrant",
+        "description": "Export SQLite-cached vectors and B&R metadata to an explicitly requested local or remote Qdrant collection.",
+        "inputSchema": object_schema(
+            {
+                "path": {"type": "string", "minLength": 1, "description": "Local Qdrant path; defaults to the index var/qdrant directory."},
+                "url": {"type": "string", "minLength": 1, "description": "Remote Qdrant URL; mutually exclusive with path."},
+                "collection": {"type": "string", "minLength": 1, "default": "br_code_search"},
+                "backend": {"type": "string", "enum": ["hashing", "sentence_transformers", "auto"], "default": "hashing"},
+                "model": {"type": "string", "minLength": 1},
+                "dimension": {"type": "integer", "minimum": 32, "maximum": 4096, "default": 256},
+                "project": {"type": "string", "minLength": 1},
+                "origin": {"type": "string", "enum": ["all", "user", "library", "physical"], "default": "all"},
+                "language": {"type": "string", "minLength": 1},
+                "max_documents": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 50000},
+                "batch_size": {"type": "integer", "minimum": 1, "maximum": 2048, "default": 256},
+                "recreate": {"type": "boolean", "default": False},
+            }
+        ),
+    },
+    {
         "name": "br_record_project_validation",
         "description": "Persist external build, field verification or version-compatibility feedback outside the source repository.",
         "inputSchema": object_schema(
@@ -399,6 +424,21 @@ class McpServer:
                 arguments.get("backend", "hashing"),
                 model=arguments.get("model"),
                 dimension=arguments.get("dimension", 256),
+            ),
+            "br_get_qdrant_status": self.index.qdrant_status,
+            "br_export_qdrant": lambda: self.index.export_qdrant(
+                path=arguments.get("path"),
+                url=arguments.get("url"),
+                collection=arguments.get("collection", "br_code_search"),
+                backend=arguments.get("backend", "hashing"),
+                model=arguments.get("model"),
+                dimension=arguments.get("dimension", 256),
+                project=arguments.get("project"),
+                origin=arguments.get("origin"),
+                language=arguments.get("language"),
+                max_documents=arguments.get("max_documents", 50000),
+                batch_size=arguments.get("batch_size", 256),
+                recreate=arguments.get("recreate", False),
             ),
             "br_record_project_validation": lambda: self.index.record_project_validation(
                 arguments["project"],

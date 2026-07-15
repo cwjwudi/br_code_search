@@ -29,6 +29,8 @@ class SemanticBackendTests(unittest.TestCase):
         self.assertEqual("offline_hashing_fallback", status["backend_kind"])
         optional = CodeSearchIndex(Path("status.sqlite3")).embedding_status("sentence_transformers")
         self.assertIn("available", optional)
+        qdrant = CodeSearchIndex(Path("status.sqlite3")).qdrant_status()
+        self.assertIn("available", qdrant)
 
 
 if __name__ == "__main__":

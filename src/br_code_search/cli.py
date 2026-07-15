@@ -48,6 +48,22 @@ def build_parser() -> argparse.ArgumentParser:
     embedding_status.add_argument("--model")
     embedding_status.add_argument("--dimension", type=int, default=256)
 
+    subparsers.add_parser("qdrant-status", help="Check optional Qdrant client availability")
+
+    qdrant_export = subparsers.add_parser("qdrant-export", help="Export cached vectors and metadata to Qdrant")
+    qdrant_export.add_argument("--path", help="Local Qdrant path (defaults to var/qdrant)")
+    qdrant_export.add_argument("--url", help="Remote Qdrant URL")
+    qdrant_export.add_argument("--collection", default="br_code_search")
+    qdrant_export.add_argument("--backend", choices=["hashing", "sentence_transformers", "auto"], default="hashing")
+    qdrant_export.add_argument("--model")
+    qdrant_export.add_argument("--dimension", type=int, default=256)
+    qdrant_export.add_argument("--project")
+    qdrant_export.add_argument("--origin", choices=["all", "user", "library", "physical"], default="all")
+    qdrant_export.add_argument("--language")
+    qdrant_export.add_argument("--max-documents", type=int, default=50000)
+    qdrant_export.add_argument("--batch-size", type=int, default=256)
+    qdrant_export.add_argument("--recreate", action="store_true")
+
     search = subparsers.add_parser("search", help="Search indexed code")
     search.add_argument("query")
     search.add_argument("--project")
@@ -228,6 +244,23 @@ def main(argv: list[str] | None = None) -> int:
             result = index.status()
         elif args.command == "embedding-status":
             result = index.embedding_status(args.backend, model=args.model, dimension=args.dimension)
+        elif args.command == "qdrant-status":
+            result = index.qdrant_status()
+        elif args.command == "qdrant-export":
+            result = index.export_qdrant(
+                path=args.path,
+                url=args.url,
+                collection=args.collection,
+                backend=args.backend,
+                model=args.model,
+                dimension=args.dimension,
+                project=args.project,
+                origin=args.origin,
+                language=args.language,
+                max_documents=args.max_documents,
+                batch_size=args.batch_size,
+                recreate=args.recreate,
+            )
         elif args.command == "search":
             result = index.search(
                 args.query,

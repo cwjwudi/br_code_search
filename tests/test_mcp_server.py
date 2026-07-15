@@ -99,6 +99,17 @@ class McpServerTests(unittest.TestCase):
             self.assertFalse(embedding_status["result"]["isError"])
             self.assertTrue(embedding_status["result"]["structuredContent"]["available"])
 
+            qdrant_status = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 40,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_qdrant_status", "arguments": {}},
+                }
+            )
+            self.assertFalse(qdrant_status["result"]["isError"])
+            self.assertIn("available", qdrant_status["result"]["structuredContent"])
+
             dataset = root / "queries.json"
             dataset.write_text(
                 '{"version": 1, "queries": [{"id": "search-me", "operation": "search", '

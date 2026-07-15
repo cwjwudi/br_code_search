@@ -1229,7 +1229,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.7.0",
+                "tool_version": "0.8.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1365,7 +1365,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.7.0",
+                "tool_version": "0.8.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -1684,6 +1684,18 @@ class CodeSearchIndex:
         from .semantic import inspect_embedding_backend
 
         return inspect_embedding_backend(backend, model=model, dimension=dimension)
+
+    def qdrant_status(self) -> dict[str, Any]:
+        """Inspect optional Qdrant client availability without opening a connection."""
+        from .qdrant import inspect_qdrant
+
+        return inspect_qdrant()
+
+    def export_qdrant(self, **kwargs: Any) -> dict[str, Any]:
+        """Export cached vectors and metadata to an explicitly requested Qdrant sink."""
+        from .qdrant import export_qdrant
+
+        return export_qdrant(self, **kwargs)
 
     def search_similar(
         self,

@@ -288,6 +288,17 @@ class IndexTests(unittest.TestCase):
                 recreate=True,
             )
             self.assertEqual(2, exported["points_written"])
+            qdrant_results = self.index.search_qdrant(
+                "DemoProgram",
+                path=Path(self.temp.name) / "qdrant",
+                collection="test",
+                backend="hashing",
+                limit=1,
+                include_source=False,
+            )
+            self.assertEqual("qdrant", qdrant_results["mode"])
+            self.assertEqual(1, qdrant_results["count"])
+            self.assertIn("qdrant_score", qdrant_results["results"][0])
 
     def test_function_block_similarity_is_type_filtered(self) -> None:
         result = self.index.find_similar_function_block("MpAxisBasic", include_source=False)

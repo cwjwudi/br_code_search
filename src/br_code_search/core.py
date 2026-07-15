@@ -1344,7 +1344,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.10.0",
+                "tool_version": "0.11.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1480,7 +1480,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.10.0",
+                "tool_version": "0.11.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -1811,6 +1811,12 @@ class CodeSearchIndex:
         from .qdrant import export_qdrant
 
         return export_qdrant(self, **kwargs)
+
+    def search_qdrant(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        """Query an explicitly configured Qdrant collection and hydrate SQLite source."""
+        from .qdrant import search_qdrant
+
+        return search_qdrant(self, query, **kwargs)
 
     def toolchain_status(self, root: str | Path | None = None) -> dict[str, Any]:
         """Inspect the sibling B&R toolchain repository without executing it."""

@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.10.0`.
+Current release: `0.11.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -33,6 +33,7 @@ python -m br_code_search.cli status
 python -m br_code_search.cli embedding-status --backend hashing
 python -m br_code_search.cli qdrant-status
 python -m br_code_search.cli qdrant-export --path var/qdrant --collection br_code_search --max-documents 50000
+python -m br_code_search.cli qdrant-search "timeout reset alarm" --path var/qdrant --limit 5
 python -m br_code_search.cli toolchain-status
 python -m br_code_search.cli import-toolchain-report C:\path\to\build-report.json --project ProjectName
 python -m br_code_search.cli build-diagnostic-summary
@@ -97,6 +98,7 @@ Example MCP client configuration:
 - `br_get_embedding_status`: check optional local embedding runtime availability
 - `br_get_qdrant_status`: check optional Qdrant client availability
 - `br_export_qdrant`: export cached vectors and B&R metadata to local or remote Qdrant
+- `br_search_qdrant`: query an explicitly configured Qdrant collection and hydrate source from SQLite
 - `br_get_toolchain_status`: inspect the sibling B&R toolchain repository without executing PLC commands
 - `br_import_toolchain_report`: import a JSON report produced by the registered `br-plc-toolchain` MCP into build history
 - `br_record_project_validation`: record external build/field/version feedback outside the source repository
@@ -206,3 +208,6 @@ Qdrant is an optional external vector sink. Install it with
 `python -m pip install -e ".[qdrant]"`; the export stores vectors and retrieval
 metadata while source text remains in SQLite. Local Qdrant mode is convenient
 for smoke tests; use a Qdrant server URL for large production collections.
+`br_search_qdrant`/CLI `qdrant-search` queries that collection and returns
+Qdrant scores while hydrating authoritative source text and validation metadata
+from SQLite.

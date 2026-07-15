@@ -109,6 +109,44 @@ class McpServerTests(unittest.TestCase):
             )
             self.assertFalse(qdrant_status["result"]["isError"])
             self.assertIn("available", qdrant_status["result"]["structuredContent"])
+            if qdrant_status["result"]["structuredContent"]["available"]:
+                qdrant_export = server.handle(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 44,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "br_export_qdrant",
+                            "arguments": {
+                                "path": str(root / "qdrant"),
+                                "collection": "mcp-test",
+                                "backend": "hashing",
+                                "max_documents": 100,
+                                "recreate": True,
+                            },
+                        },
+                    }
+                )
+                self.assertFalse(qdrant_export["result"]["isError"])
+                qdrant_search = server.handle(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 45,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "br_search_qdrant",
+                            "arguments": {
+                                "query": "SearchMe",
+                                "path": str(root / "qdrant"),
+                                "collection": "mcp-test",
+                                "limit": 2,
+                                "include_source": False,
+                            },
+                        },
+                    }
+                )
+                self.assertFalse(qdrant_search["result"]["isError"])
+                self.assertEqual("qdrant", qdrant_search["result"]["structuredContent"]["mode"])
 
             toolchain_status = server.handle(
                 {

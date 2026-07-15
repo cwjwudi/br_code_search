@@ -75,6 +75,25 @@ def build_parser() -> argparse.ArgumentParser:
     qdrant_export.add_argument("--batch-size", type=int, default=256)
     qdrant_export.add_argument("--recreate", action="store_true")
 
+    qdrant_search = subparsers.add_parser("qdrant-search", help="Query a Qdrant semantic collection and hydrate SQLite source")
+    qdrant_search.add_argument("query")
+    qdrant_search.add_argument("--path", help="Local Qdrant path")
+    qdrant_search.add_argument("--url", help="Remote Qdrant URL")
+    qdrant_search.add_argument("--collection", default="br_code_search")
+    qdrant_search.add_argument("--backend", choices=["hashing", "sentence_transformers", "auto"], default="hashing")
+    qdrant_search.add_argument("--model")
+    qdrant_search.add_argument("--dimension", type=int, default=256)
+    qdrant_search.add_argument("--project")
+    qdrant_search.add_argument("--origin", choices=["all", "user", "library", "physical"], default="all")
+    qdrant_search.add_argument("--language")
+    qdrant_search.add_argument("--quality", choices=["gold", "normal", "deprecated"])
+    qdrant_search.add_argument("--verified-only", action="store_true")
+    qdrant_search.add_argument("--include-deprecated", action="store_true")
+    qdrant_search.add_argument("--limit", type=int, default=10)
+    qdrant_search.add_argument("--no-source", action="store_true")
+    qdrant_search.add_argument("--max-chars-per-result", type=int, default=4000)
+    qdrant_search.add_argument("--score-threshold", type=float)
+
     search = subparsers.add_parser("search", help="Search indexed code")
     search.add_argument("query")
     search.add_argument("--project")
@@ -298,6 +317,26 @@ def main(argv: list[str] | None = None) -> int:
                 max_documents=args.max_documents,
                 batch_size=args.batch_size,
                 recreate=args.recreate,
+            )
+        elif args.command == "qdrant-search":
+            result = index.search_qdrant(
+                args.query,
+                path=args.path,
+                url=args.url,
+                collection=args.collection,
+                backend=args.backend,
+                model=args.model,
+                dimension=args.dimension,
+                project=args.project,
+                origin=args.origin,
+                language=args.language,
+                quality=args.quality,
+                verified_only=args.verified_only,
+                include_deprecated=args.include_deprecated,
+                limit=args.limit,
+                include_source=not args.no_source,
+                max_chars_per_result=args.max_chars_per_result,
+                score_threshold=args.score_threshold,
             )
         elif args.command == "search":
             result = index.search(

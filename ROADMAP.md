@@ -140,7 +140,14 @@
 - 新增 `br_get_build_diagnostic_summary`/CLI `build-diagnostic-summary`，跨项目聚合重复错误、警告和状态；
 - 诊断接口只返回摘要，不把完整 PLC 日志复制进 MCP 响应。
 
-## v0.11+ — 外部索引与工具链闭环
+## v0.11.0 — 当前版本：Qdrant 语义查询闭环
+
+- 新增 `br_search_qdrant`/CLI `qdrant-search`，查询本地或远程 Qdrant 集合；
+- Qdrant 只返回向量和元数据，源代码、验证记录和质量字段从 SQLite 权威索引回填；
+- 支持项目、来源、语言、质量、已验证和废弃过滤，并返回可解释的 Qdrant 分数；
+- 保持 Qdrant 可选依赖和 SQLite 离线 fallback，未改变 PLC 工具链权限。
+
+## v0.12+ — 外部索引与工具链闭环
 
 - 接收外部构建结果和人工验证结果；
 - 以成功构建、现场验证和版本兼容性参与排序；

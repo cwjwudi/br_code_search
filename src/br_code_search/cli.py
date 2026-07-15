@@ -50,6 +50,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("qdrant-status", help="Check optional Qdrant client availability")
 
+    toolchain_status = subparsers.add_parser("toolchain-status", help="Inspect the external B&R toolchain adapter without executing PLC commands")
+    toolchain_status.add_argument("--root", help="br_device_autodev root override")
+
+    import_report = subparsers.add_parser("import-toolchain-report", help="Import a br-plc-toolchain JSON report into build history")
+    import_report.add_argument("report")
+    import_report.add_argument("--project")
+    import_report.add_argument("--source", default="br-plc-toolchain")
+    import_report.add_argument("--as-version")
+    import_report.add_argument("--ar-version")
+    import_report.add_argument("--cpu-model")
+
     qdrant_export = subparsers.add_parser("qdrant-export", help="Export cached vectors and metadata to Qdrant")
     qdrant_export.add_argument("--path", help="Local Qdrant path (defaults to var/qdrant)")
     qdrant_export.add_argument("--url", help="Remote Qdrant URL")
@@ -246,6 +257,17 @@ def main(argv: list[str] | None = None) -> int:
             result = index.embedding_status(args.backend, model=args.model, dimension=args.dimension)
         elif args.command == "qdrant-status":
             result = index.qdrant_status()
+        elif args.command == "toolchain-status":
+            result = index.toolchain_status(args.root)
+        elif args.command == "import-toolchain-report":
+            result = index.import_toolchain_report(
+                args.report,
+                project=args.project,
+                source=args.source,
+                as_version=args.as_version,
+                ar_version=args.ar_version,
+                cpu_model=args.cpu_model,
+            )
         elif args.command == "qdrant-export":
             result = index.export_qdrant(
                 path=args.path,

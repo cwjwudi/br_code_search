@@ -122,12 +122,23 @@
 - 保留 SQLite 作为权威源文本和离线 fallback；Qdrant 不会修改参考工程，也不强制成为运行依赖。
 - 已在真实 31,742 文档库完成本地 collection 导出与点数核对；大规模部署建议使用 Qdrant 服务而非本地模式。
 
-## v0.9+ — 外部索引与工具链闭环
+## v0.9.0 — 当前版本：工具链报告适配器
+
+- 新增 `br_get_toolchain_status`/CLI `toolchain-status`，只读检查
+  `br_device_autodev` 的上下文文档、目标配置和报告目录；
+- 新增 `br_import_toolchain_report`/CLI `import-toolchain-report`，解析注册的
+  `br-plc-toolchain` MCP JSON/JSON-RPC 报告，并自动写入项目编译历史、版本、
+  CPU、RUC 包路径、错误和警告；
+- 明确执行边界：代码检索工具不启动 Automation Studio、PVITransfer，不下载、
+  不写 PVI/OPC UA；实际 PLC 操作继续由独立受控工具链负责；
+- 导入结果继续参与项目质量/验证排序，且保留原始报告路径以便审计。
+
+## v0.10+ — 外部索引与工具链闭环
 
 - 接收外部构建结果和人工验证结果；
 - 以成功构建、现场验证和版本兼容性参与排序；
-- 与 B&R Automation Studio 工具链建立只读诊断反馈接口；
-- 保持参考库只读，代码修改和 PLC 下载继续由其他受控工具负责。
+- 增加报告 schema 版本、构建日志摘要和跨项目诊断聚合；
+- 在不扩大代码检索权限的前提下，对接更多只读 B&R 诊断能力。
 
 ## 迭代原则
 

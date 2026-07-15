@@ -1229,7 +1229,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.8.0",
+                "tool_version": "0.9.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1365,7 +1365,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.8.0",
+                "tool_version": "0.9.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -1696,6 +1696,35 @@ class CodeSearchIndex:
         from .qdrant import export_qdrant
 
         return export_qdrant(self, **kwargs)
+
+    def toolchain_status(self, root: str | Path | None = None) -> dict[str, Any]:
+        """Inspect the sibling B&R toolchain repository without executing it."""
+        from .toolchain import inspect_toolchain
+
+        return inspect_toolchain(root)
+
+    def import_toolchain_report(
+        self,
+        report_path: str | Path,
+        *,
+        project: str | None = None,
+        source: str = "br-plc-toolchain",
+        as_version: str | None = None,
+        ar_version: str | None = None,
+        cpu_model: str | None = None,
+    ) -> dict[str, Any]:
+        """Import a JSON report produced by the external B&R toolchain MCP."""
+        from .toolchain import import_report
+
+        return import_report(
+            self,
+            report_path,
+            project=project,
+            source=source,
+            as_version=as_version,
+            ar_version=ar_version,
+            cpu_model=cpu_model,
+        )
 
     def search_similar(
         self,

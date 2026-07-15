@@ -181,6 +181,30 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "br_get_toolchain_status",
+        "description": "Inspect the sibling B&R toolchain repository and report safe read-only adapter capabilities; never executes PLC commands.",
+        "inputSchema": object_schema(
+            {
+                "root": {"type": "string", "minLength": 1, "description": "Optional br_device_autodev root override."},
+            }
+        ),
+    },
+    {
+        "name": "br_import_toolchain_report",
+        "description": "Import a JSON report produced by the registered br-plc-toolchain MCP into project build history without launching Automation Studio or changing a PLC.",
+        "inputSchema": object_schema(
+            {
+                "report_path": {"type": "string", "minLength": 1},
+                "project": {"type": "string", "minLength": 1, "description": "Indexed project name; required when the report has no project field."},
+                "source": {"type": "string", "default": "br-plc-toolchain"},
+                "as_version": {"type": "string", "minLength": 1},
+                "ar_version": {"type": "string", "minLength": 1},
+                "cpu_model": {"type": "string", "minLength": 1},
+            },
+            ["report_path"],
+        ),
+    },
+    {
         "name": "br_record_project_validation",
         "description": "Persist external build, field verification or version-compatibility feedback outside the source repository.",
         "inputSchema": object_schema(
@@ -439,6 +463,15 @@ class McpServer:
                 max_documents=arguments.get("max_documents", 50000),
                 batch_size=arguments.get("batch_size", 256),
                 recreate=arguments.get("recreate", False),
+            ),
+            "br_get_toolchain_status": lambda: self.index.toolchain_status(arguments.get("root")),
+            "br_import_toolchain_report": lambda: self.index.import_toolchain_report(
+                arguments["report_path"],
+                project=arguments.get("project"),
+                source=arguments.get("source", "br-plc-toolchain"),
+                as_version=arguments.get("as_version"),
+                ar_version=arguments.get("ar_version"),
+                cpu_model=arguments.get("cpu_model"),
             ),
             "br_record_project_validation": lambda: self.index.record_project_validation(
                 arguments["project"],

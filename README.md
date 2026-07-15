@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.8.0`.
+Current release: `0.9.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -33,6 +33,8 @@ python -m br_code_search.cli status
 python -m br_code_search.cli embedding-status --backend hashing
 python -m br_code_search.cli qdrant-status
 python -m br_code_search.cli qdrant-export --path var/qdrant --collection br_code_search --max-documents 50000
+python -m br_code_search.cli toolchain-status
+python -m br_code_search.cli import-toolchain-report C:\path\to\build-report.json --project ProjectName
 python -m br_code_search.cli record-validation ProjectName --kind build --status passed --source "Automation Studio"
 python -m br_code_search.cli compile-history ProjectName
 python -m br_code_search.cli search-build-errors "E123"
@@ -94,6 +96,8 @@ Example MCP client configuration:
 - `br_get_embedding_status`: check optional local embedding runtime availability
 - `br_get_qdrant_status`: check optional Qdrant client availability
 - `br_export_qdrant`: export cached vectors and B&R metadata to local or remote Qdrant
+- `br_get_toolchain_status`: inspect the sibling B&R toolchain repository without executing PLC commands
+- `br_import_toolchain_report`: import a JSON report produced by the registered `br-plc-toolchain` MCP into build history
 - `br_record_project_validation`: record external build/field/version feedback outside the source repository
 - `br_get_compile_history`: return recorded build results and diagnostics for a project
 - `br_search_build_errors`: search recorded build errors/warnings across projects
@@ -149,6 +153,13 @@ recognized.
 External build, field-verification and compatibility records are stored outside
 the source tree. They are returned by project/result APIs and can contribute a
 small, explicit boost or penalty to lexical/structural similarity ranking.
+
+The toolchain adapter is intentionally read-only. `br_get_toolchain_status` only
+checks the expected `br_device_autodev` documentation/configuration layout, while
+`br_import_toolchain_report` consumes a JSON report already produced by the
+registered `br-plc-toolchain` MCP. It never launches Automation Studio,
+PVITransfer, PowerShell, or PLC writes; build/download permissions remain in the
+separate toolchain service.
 
 For multi-target Automation Studio projects, target metadata is inferred from
 the nearest `Cpu.pkg`/`Config.pkg` and from `.sw` Task-to-program assignments.

@@ -110,6 +110,20 @@ class McpServerTests(unittest.TestCase):
             self.assertFalse(qdrant_status["result"]["isError"])
             self.assertIn("available", qdrant_status["result"]["structuredContent"])
 
+            toolchain_status = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 41,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_get_toolchain_status",
+                        "arguments": {"root": str(root / "missing-toolchain")},
+                    },
+                }
+            )
+            self.assertFalse(toolchain_status["result"]["isError"])
+            self.assertTrue(toolchain_status["result"]["structuredContent"]["read_only"])
+
             dataset = root / "queries.json"
             dataset.write_text(
                 '{"version": 1, "queries": [{"id": "search-me", "operation": "search", '
@@ -213,6 +227,26 @@ class McpServerTests(unittest.TestCase):
             self.assertFalse(validation["result"]["isError"])
             self.assertEqual("failed", validation["result"]["structuredContent"]["record"]["status"])
 
+            report = root / "build-report.json"
+            report.write_text(
+                '{"ok": true, "tool": "plc_build_project", "summary": "Build passed", '
+                '"data": {"ok": true, "as_version": "6.5.0", "warnings": ["W1"]}}',
+                encoding="utf-8",
+            )
+            imported = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 42,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_import_toolchain_report",
+                        "arguments": {"report_path": str(report), "project": "Sample"},
+                    },
+                }
+            )
+            self.assertFalse(imported["result"]["isError"])
+            self.assertEqual("passed", imported["result"]["structuredContent"]["record"]["status"])
+
             history = server.handle(
                 {
                     "jsonrpc": "2.0",
@@ -222,7 +256,7 @@ class McpServerTests(unittest.TestCase):
                 }
             )
             self.assertFalse(history["result"]["isError"])
-            self.assertEqual(1, history["result"]["structuredContent"]["count"])
+            self.assertEqual(2, history["result"]["structuredContent"]["count"])
 
             build_errors = server.handle(
                 {

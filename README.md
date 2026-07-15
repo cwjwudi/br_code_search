@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.12.0`.
+Current release: `0.13.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.

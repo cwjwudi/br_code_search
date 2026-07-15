@@ -361,6 +361,9 @@ class IndexTests(unittest.TestCase):
         self.assertIn("call", impact["access_counts"])
         self.assertIn("ProjectA", impact["affected_projects"])
         self.assertTrue(impact["affected_documents"])
+        self.assertIn("quality_counts", impact)
+        self.assertIn("project_annotations", impact)
+        self.assertIn("affected_task_count", impact)
 
 
 if __name__ == "__main__":

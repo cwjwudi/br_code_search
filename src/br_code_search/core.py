@@ -1344,7 +1344,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.12.0",
+                "tool_version": "0.13.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1480,7 +1480,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.12.0",
+                "tool_version": "0.13.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -2557,6 +2557,17 @@ class CodeSearchIndex:
         relation_counts: dict[str, int] = {}
         affected_documents: dict[tuple[str, str], dict[str, Any]] = {}
         affected_projects: set[str] = set()
+        project_annotations: dict[str, dict[str, Any]] = {}
+        quality_counts: dict[str, int] = {}
+        task_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        with closing(self.connect()) as connection, connection:
+            for project_name, path in {(str(item["project"]), str(item["path"])) for item in references}:
+                project_row = connection.execute(
+                    "SELECT id FROM projects WHERE name=? COLLATE NOCASE", (project_name,)
+                ).fetchone()
+                task_cache[(project_name, path)] = (
+                    self._tasks_for_path(connection, int(project_row["id"]), path) if project_row else []
+                )
         targets: dict[str, set[str]] = {"cpu_models": set(), "ar_versions": set(), "configurations": set()}
         callers: dict[tuple[str, str, str | None], dict[str, Any]] = {}
         for reference in references:
@@ -2567,6 +2578,18 @@ class CodeSearchIndex:
             project_name = str(reference["project"])
             path = str(reference["path"])
             affected_projects.add(project_name)
+            quality = str(reference.get("quality") or "normal")
+            quality_counts[quality] = quality_counts.get(quality, 0) + 1
+            project_annotations.setdefault(
+                project_name,
+                {
+                    "quality": quality,
+                    "verified": bool(reference.get("verified")),
+                    "deprecated": bool(reference.get("deprecated")),
+                    "do_not_copy": bool(reference.get("do_not_copy")),
+                },
+            )
+            tasks = task_cache.get((project_name, path), [])
             affected_documents.setdefault(
                 (project_name, path),
                 {
@@ -2581,6 +2604,8 @@ class CodeSearchIndex:
                     "target_cpu_models": reference.get("target_cpu_models", []),
                     "target_ar_versions": reference.get("target_ar_versions", []),
                     "target_configurations": reference.get("target_configurations", []),
+                    "tasks": tasks[:20],
+                    "task_count": len(tasks),
                 },
             )
             document = affected_documents[(project_name, path)]
@@ -2605,8 +2630,19 @@ class CodeSearchIndex:
         call_count = access_counts.get("call", 0)
         project_count = len(affected_projects)
         document_count = len(affected_documents)
+        task_count = sum(int(item["task_count"]) for item in affected_documents.values())
+        verified_reference_count = sum(1 for item in references if item.get("verified"))
+        blocked_reference_count = sum(
+            1 for item in references if item.get("deprecated") or item.get("do_not_copy")
+        )
         impact_score = round(min(1.0, 0.1 * project_count + 0.03 * document_count + 0.02 * write_count + 0.04 * call_count), 6)
-        risk = "high" if write_count >= 5 or project_count >= 3 else "medium" if write_count or call_count else "low"
+        risk = (
+            "high"
+            if write_count >= 5 or project_count >= 3 or blocked_reference_count
+            else "medium"
+            if write_count or call_count or task_count
+            else "low"
+        )
         return {
             "ok": True,
             "name": name,
@@ -2617,9 +2653,14 @@ class CodeSearchIndex:
             "affected_document_count": document_count,
             "affected_projects": sorted(affected_projects),
             "affected_documents": list(affected_documents.values())[: max(1, min(int(limit), 500))],
+            "affected_task_count": task_count,
+            "project_annotations": project_annotations,
             "callers": list(callers.values())[: max(1, min(int(limit), 500))],
             "access_counts": access_counts,
             "relation_counts": relation_counts,
+            "quality_counts": quality_counts,
+            "verified_reference_count": verified_reference_count,
+            "blocked_reference_count": blocked_reference_count,
             "targets": {key: sorted(values) for key, values in targets.items()},
             "impact_score": impact_score,
             "risk": risk,

@@ -57,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--include-deprecated", action="store_true")
     search.add_argument("--limit", type=int, default=10)
     search.add_argument("--no-source", action="store_true")
+    search.add_argument("--aggregate-files", action="store_true", help="Group matching units by source file")
 
     symbol = subparsers.add_parser("find-symbol", help="Find symbols by exact name or prefix")
     symbol.add_argument("name")
@@ -150,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
                 include_deprecated=args.include_deprecated,
                 limit=args.limit,
                 include_source=not args.no_source,
+                aggregate_files=args.aggregate_files,
             )
         elif args.command == "find-symbol":
             result = index.find_symbol(

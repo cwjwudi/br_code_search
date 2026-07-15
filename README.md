@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.4.3`.
+Current release: `0.4.4`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -32,6 +32,7 @@ python -m br_code_search.cli search MpAxisBasic --origin user
 python -m br_code_search.cli find-symbol fbHomeMaster
 python -m br_code_search.cli similar "timeout reset alarm cylinder" --origin user
 python -m br_code_search.cli search MpAxisBasic --as-version 4.12 --ar-version H4.93 --cpu-model X20CP1686X --library mapp6D
+python -m br_code_search.cli search fbMpAbMasterCalc --aggregate-files --limit 5
 python -m br_code_search.cli tasks "2406长虹飞狮"
 python -m br_code_search.cli type MC_ACP_ENCOD_REF
 python -m br_code_search.cli references Ready --limit 20
@@ -89,6 +90,9 @@ Example MCP client configuration:
 
 `br_search_code`, `br_find_similar_code` and `br_find_symbol` accept optional
 `as_version`, `ar_version`, `cpu_model`, `library` and `library_version` filters.
+`br_search_code` and the CLI `search` command also accept `aggregate_files` /
+`--aggregate-files` to group multiple parsed units from one source file while
+retaining their symbol and unit metadata.
 
 `br_get_program_context` is the preferred tool before an AI writes code. It
 returns the matched source plus related `Init`, `Cyclic`, `Exit`, action,

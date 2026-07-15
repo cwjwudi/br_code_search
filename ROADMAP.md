@@ -49,16 +49,22 @@
 - `br_find_references` 区分 `read`、`write`、`call`、`member` 和 `comment`；
 - 保留 `declaration/use` 关系、声明类型和精确行号，并去除同文件重复行。
 
-## v0.4.3 — 当前版本：工程环境过滤
+## v0.4.3 — 已完成：工程环境过滤
 
 - 从 `.apj` 和 `.pkg` 提取 AS、Automation Runtime、CPU ModuleId 和技术包版本；
 - `search`、`similar`、`find_symbol` 支持 AS/AR/CPU/库版本过滤；
 - 默认检索排序优先 `gold`、已验证项目和用户工程代码。
 
+## v0.4.4 — 当前版本：同文件聚合
+
+- `br_search_code`/CLI 支持可选的同文件聚合；
+- 聚合结果保留文件主单元、全部符号摘要、文档 ID 和受限源码单元；
+- 默认仍返回符号级结果，保证已有 MCP 客户端兼容。
+
 后续 v0.4.x 小版本继续完善：
 
-- 结果去重、同文件聚合和质量标签排序；
-- AS、AR、CPU 和库版本过滤。
+- 多文件结果的去重、同文件聚合默认策略和质量标签评测；
+- AS/AR/CPU 配置之间的精确目标关联。
 
 ## v0.5 — 语义检索
 

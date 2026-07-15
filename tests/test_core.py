@@ -153,6 +153,11 @@ class IndexTests(unittest.TestCase):
             library_version="5.24.1",
         )
         self.assertEqual(1, filtered["count"])
+        unit_results = self.index.search("Ready", limit=10)
+        file_results = self.index.search("Ready", limit=10, aggregate_files=True)
+        self.assertLessEqual(file_results["count"], unit_results["count"])
+        self.assertTrue(any(item["symbol_count"] > 1 for item in file_results["results"]))
+        self.assertTrue(all(item["aggregation"] == "file" for item in file_results["results"]))
 
     def test_find_symbol_and_context(self) -> None:
         symbols = self.index.find_symbol("DemoProgram")

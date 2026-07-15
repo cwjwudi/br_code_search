@@ -844,7 +844,7 @@ class CodeSearchIndex:
                 "schema_version": "5",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.3",
+                "tool_version": "0.4.4",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
@@ -964,7 +964,7 @@ class CodeSearchIndex:
             for project_root, project_id in list(existing_projects.items()):
                 if project_root not in project_ids:
                     connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
-            meta.update({"schema_version": "5", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.3"})
+            meta.update({"schema_version": "5", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.4"})
             connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
@@ -1056,6 +1056,51 @@ class CodeSearchIndex:
             payload["source_truncated"] = len(source) > max_chars
         return payload
 
+    @classmethod
+    def _aggregate_file_rows(
+        cls,
+        rows: list[sqlite3.Row],
+        *,
+        include_source: bool,
+        max_chars_per_result: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
+        for row in rows:
+            grouped.setdefault((row["project_name"], row["relative_path"]), []).append(row)
+        results: list[dict[str, Any]] = []
+        for group_rows in list(grouped.values())[:limit]:
+            primary = group_rows[0]
+            payload = cls._row_payload(
+                primary, include_source=include_source, max_chars=max_chars_per_result
+            )
+            payload.update(
+                {
+                    "aggregation": "file",
+                    "document_ids": [int(row["id"]) for row in group_rows],
+                    "symbol_count": len(group_rows),
+                    "symbols": [
+                        {
+                            "document_id": int(row["id"]),
+                            "symbol": row["symbol_name"],
+                            "symbol_type": row["symbol_type"],
+                            "start_line": row["start_line"],
+                            "end_line": row["end_line"],
+                        }
+                        for row in group_rows
+                    ],
+                }
+            )
+            max_units = 12
+            unit_chars = max(200, max_chars_per_result // max(1, min(len(group_rows), 5)))
+            payload["units"] = [
+                cls._row_payload(row, include_source=include_source, max_chars=unit_chars)
+                for row in group_rows[:max_units]
+            ]
+            payload["units_truncated"] = len(group_rows) > max_units
+            results.append(payload)
+        return results
+
     def _ensure_index(self) -> None:
         if not self.database_path.exists():
             raise ValueError("Index database does not exist. Call br_index_codebase first.")
@@ -1078,6 +1123,7 @@ class CodeSearchIndex:
         limit: int = 10,
         include_source: bool = True,
         max_chars_per_result: int = 4000,
+        aggregate_files: bool = False,
     ) -> dict[str, Any]:
         self._ensure_index()
         query = query.strip()
@@ -1114,6 +1160,7 @@ class CodeSearchIndex:
         if not include_deprecated and quality != "deprecated":
             filters.append("p.deprecated = 0 AND p.do_not_copy = 0")
         filter_sql = (" AND " + " AND ".join(filters)) if filters else ""
+        candidate_limit = min(500, max(limit, limit * 5 if aggregate_files else limit))
         base_columns = """d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
             d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
             p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
@@ -1138,11 +1185,11 @@ class CodeSearchIndex:
                          CASE d.origin WHEN 'user' THEN 0 WHEN 'library' THEN 1 ELSE 2 END,
                          length(d.content)
                 LIMIT ?""",
-                [query, f"%{query}%", f"%{query}%", *parameters, query, f"{query}%", limit],
+                [query, f"%{query}%", f"%{query}%", *parameters, query, f"{query}%", candidate_limit],
             ).fetchall()
             for row in exact_rows:
                 rows_by_id[int(row["id"])] = row
-            if fts_query and len(rows_by_id) < limit:
+            if fts_query and len(rows_by_id) < candidate_limit:
                 fts_rows = connection.execute(
                     f"""SELECT {base_columns}
                     FROM documents_fts f
@@ -1160,23 +1207,34 @@ class CodeSearchIndex:
                              bm25(documents_fts),
                              CASE d.origin WHEN 'user' THEN 0 WHEN 'library' THEN 1 ELSE 2 END
                     LIMIT ?""",
-                    [fts_query, *parameters, limit],
+                    [fts_query, *parameters, candidate_limit],
                 ).fetchall()
                 for row in fts_rows:
                     rows_by_id.setdefault(int(row["id"]), row)
-        rows = list(rows_by_id.values())[:limit]
+        rows = list(rows_by_id.values())[:candidate_limit]
+        results = (
+            self._aggregate_file_rows(
+                rows,
+                include_source=include_source,
+                max_chars_per_result=max_chars_per_result,
+                limit=limit,
+            )
+            if aggregate_files
+            else [
+                self._row_payload(row, include_source=include_source, max_chars=max_chars_per_result)
+                for row in rows[:limit]
+            ]
+        )
         return {
             "ok": True,
             "query": query,
             "filters": {"project": project, "origin": origin, "language": language,
                         "as_version": as_version, "ar_version": ar_version, "cpu_model": cpu_model,
                         "library": library, "library_version": library_version, "quality": quality,
+                        "aggregate_files": aggregate_files,
                         "verified_only": verified_only, "include_deprecated": include_deprecated},
-            "count": len(rows),
-            "results": [
-                self._row_payload(row, include_source=include_source, max_chars=max_chars_per_result)
-                for row in rows
-            ],
+            "count": len(results),
+            "results": results,
         }
 
     def search_similar(

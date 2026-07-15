@@ -64,11 +64,15 @@ class McpServerTests(unittest.TestCase):
                             "origin": "user",
                             "ar_version": "H4.93",
                             "cpu_model": "X20CP1585",
+                            "aggregate_files": True,
                         },
                     },
                 }
             )
             self.assertGreaterEqual(searched["result"]["structuredContent"]["count"], 1)
+            self.assertTrue(
+                all(item["aggregation"] == "file" for item in searched["result"]["structuredContent"]["results"])
+            )
 
             similar = server.handle(
                 {

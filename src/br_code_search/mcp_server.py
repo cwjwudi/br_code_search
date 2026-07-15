@@ -92,7 +92,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         ),
     },
     {
-                "name": "br_search_code",
+        "name": "br_search_code",
         "description": "Search B&R source with exact and SQLite FTS matching. Prefer origin=user for implementation style.",
         "inputSchema": object_schema(
             {
@@ -111,6 +111,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
                 "include_source": {"type": "boolean", "default": True},
                 "max_chars_per_result": {"type": "integer", "minimum": 200, "maximum": 30000, "default": 4000},
+                "aggregate_files": {"type": "boolean", "default": False, "description": "Group matching units by project-relative file."},
             },
             ["query"],
         ),
@@ -251,6 +252,7 @@ class McpServer:
                 limit=arguments.get("limit", 10),
                 include_source=arguments.get("include_source", True),
                 max_chars_per_result=arguments.get("max_chars_per_result", 4000),
+                aggregate_files=arguments.get("aggregate_files", False),
             ),
             "br_find_similar_code": lambda: self.index.search_similar(
                 arguments.get("query"),

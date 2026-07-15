@@ -110,6 +110,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "inputSchema": object_schema({}),
     },
     {
+        "name": "br_get_embedding_status",
+        "description": "Check local embedding backend availability without downloading or loading a model.",
+        "inputSchema": object_schema(
+            {
+                "backend": {"type": "string", "enum": ["hashing", "sentence_transformers", "auto"], "default": "hashing"},
+                "model": {"type": "string", "minLength": 1},
+                "dimension": {"type": "integer", "minimum": 32, "maximum": 4096, "default": 256},
+            }
+        ),
+    },
+    {
         "name": "br_evaluate_retrieval",
         "description": "Run a versioned JSON retrieval dataset and report Hit@K/MRR without modifying the source repository.",
         "inputSchema": object_schema(
@@ -275,6 +286,11 @@ class McpServer:
         calls: dict[str, Callable[[], dict[str, Any]]] = {
             "br_index_codebase": index_codebase,
             "br_get_index_status": self.index.status,
+            "br_get_embedding_status": lambda: self.index.embedding_status(
+                arguments.get("backend", "hashing"),
+                model=arguments.get("model"),
+                dimension=arguments.get("dimension", 256),
+            ),
             "br_evaluate_retrieval": lambda: evaluate_dataset(
                 self.index,
                 arguments["dataset_path"],

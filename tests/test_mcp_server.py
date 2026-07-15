@@ -52,6 +52,17 @@ class McpServerTests(unittest.TestCase):
             )
             self.assertFalse(indexed["result"]["isError"])
 
+            embedding_status = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 30,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_embedding_status", "arguments": {"backend": "hashing"}},
+                }
+            )
+            self.assertFalse(embedding_status["result"]["isError"])
+            self.assertTrue(embedding_status["result"]["structuredContent"]["available"])
+
             dataset = root / "queries.json"
             dataset.write_text(
                 '{"version": 1, "queries": [{"id": "search-me", "operation": "search", '

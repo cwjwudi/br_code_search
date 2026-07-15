@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.5.0`.
+Current release: `0.5.1`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -28,6 +28,7 @@ $env:PYTHONPATH = "$PWD\src"
 python -m br_code_search.cli index --source C:\Users\BR\code_base
 python -m br_code_search.cli sync --source C:\Users\BR\code_base
 python -m br_code_search.cli status
+python -m br_code_search.cli embedding-status --backend hashing
 python -m br_code_search.cli search MpAxisBasic --origin user
 python -m br_code_search.cli find-symbol fbHomeMaster
 python -m br_code_search.cli similar "timeout reset alarm cylinder" --origin user
@@ -79,6 +80,7 @@ Example MCP client configuration:
 
 - `br_index_codebase`: synchronize or rebuild the local index from the configured source root
 - `br_get_index_status`: return index statistics and configured paths
+- `br_get_embedding_status`: check optional local embedding runtime availability
 - `br_evaluate_retrieval`: run a versioned JSON query set and report Hit@K/MRR
 - `br_annotate_project`: persist project quality and verification metadata outside the source repository
 - `br_search_code`: full-text and exact source search

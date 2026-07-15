@@ -940,7 +940,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.5.0",
+                "tool_version": "0.5.1",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1075,7 +1075,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.5.0",
+                "tool_version": "0.5.1",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -1380,6 +1380,18 @@ class CodeSearchIndex:
         from .semantic import hybrid_search
 
         return hybrid_search(self, query, **kwargs)
+
+    def embedding_status(
+        self,
+        backend: str = "hashing",
+        *,
+        model: str | None = None,
+        dimension: int = 256,
+    ) -> dict[str, Any]:
+        """Inspect optional embedding runtime availability without loading a model."""
+        from .semantic import inspect_embedding_backend
+
+        return inspect_embedding_backend(backend, model=model, dimension=dimension)
 
     def search_similar(
         self,

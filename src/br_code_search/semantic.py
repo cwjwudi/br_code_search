@@ -8,12 +8,12 @@ installed; no model download is triggered by the default path.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import math
 import re
 from contextlib import closing
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
 from .core import IDENTIFIER_RE, CodeSearchIndex, add_project_version_filters, utc_now
@@ -155,6 +155,72 @@ def create_embedding_backend(
                 pass
         return HashEmbeddingBackend(dimension=max(32, min(int(dimension), 4096)))
     raise ValueError("embedding backend must be one of: hashing, sentence_transformers, auto")
+
+
+def inspect_embedding_backend(
+    name: str = "hashing",
+    *,
+    model: str | None = None,
+    dimension: int = 256,
+) -> dict[str, Any]:
+    """Report backend availability without loading or downloading a model."""
+    normalized = (name or "hashing").strip().casefold()
+    safe_dimension = max(32, min(int(dimension), 4096))
+    if normalized in {"hashing", "offline", "fallback"}:
+        return {
+            "ok": True,
+            "available": True,
+            "requested_backend": name,
+            "backend": f"hashing:{safe_dimension}",
+            "backend_kind": "offline_hashing_fallback",
+            "dimension": safe_dimension,
+            "model": None,
+            "message": "Dependency-free deterministic fallback is available.",
+        }
+    if normalized in {"sentence_transformers", "sentence-transformers", "st"}:
+        installed = importlib.util.find_spec("sentence_transformers") is not None
+        selected_model = model or "sentence-transformers/all-MiniLM-L6-v2"
+        return {
+            "ok": True,
+            "available": installed,
+            "requested_backend": name,
+            "backend": f"sentence_transformers:{selected_model}",
+            "backend_kind": "trained_local_model",
+            "dimension": None,
+            "model": selected_model,
+            "message": (
+                "sentence-transformers is installed; model loading is deferred until hybrid search."
+                if installed
+                else "sentence-transformers is not installed; install the optional 'semantic' extra."
+            ),
+        }
+    if normalized == "auto":
+        if model and importlib.util.find_spec("sentence_transformers") is not None:
+            return {
+                "ok": True,
+                "available": True,
+                "requested_backend": name,
+                "backend": f"sentence_transformers:{model}",
+                "backend_kind": "trained_local_model",
+                "dimension": None,
+                "model": model,
+                "message": "Auto mode will use the selected local SentenceTransformers model.",
+            }
+        result = inspect_embedding_backend("hashing", dimension=safe_dimension)
+        result.update({"requested_backend": name, "message": "Auto mode will use the offline hashing fallback."})
+        return result
+    if normalized in _BACKEND_FACTORIES:
+        return {
+            "ok": True,
+            "available": True,
+            "requested_backend": name,
+            "backend": normalized,
+            "backend_kind": "custom_backend",
+            "dimension": safe_dimension,
+            "model": model,
+            "message": "A registered custom backend factory is available.",
+        }
+    raise ValueError("embedding backend must be one of: hashing, sentence_transformers, auto, or a registered backend")
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
@@ -445,12 +511,19 @@ def hybrid_search(
                 }
             )
             results.append(payload)
+    backend_kind = (
+        "trained_local_model"
+        if isinstance(embedding, SentenceTransformersBackend)
+        else "offline_hashing_fallback"
+        if isinstance(embedding, HashEmbeddingBackend)
+        else "custom_backend"
+    )
     return {
         "ok": True,
         "mode": "hybrid",
         "query": query,
         "backend": embedding.key,
-        "backend_kind": "trained_local_model" if isinstance(embedding, SentenceTransformersBackend) else "offline_hashing_fallback",
+        "backend_kind": backend_kind,
         "filters": {
             "project": project,
             "origin": origin,
@@ -478,7 +551,9 @@ def hybrid_search(
         "note": (
             "Hashing fallback is deterministic and offline but is not a trained language model; "
             "select backend='sentence_transformers' with a local model for true semantic embeddings."
-            if not isinstance(embedding, SentenceTransformersBackend)
+            if isinstance(embedding, HashEmbeddingBackend)
             else "Semantic scores come from the selected local SentenceTransformers model."
+            if isinstance(embedding, SentenceTransformersBackend)
+            else "Semantic scores come from a registered custom embedding backend."
         ),
     }

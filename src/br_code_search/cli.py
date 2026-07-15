@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Show index status")
 
+    embedding_status = subparsers.add_parser("embedding-status", help="Check local embedding backend availability")
+    embedding_status.add_argument("--backend", choices=["hashing", "sentence_transformers", "auto"], default="hashing")
+    embedding_status.add_argument("--model")
+    embedding_status.add_argument("--dimension", type=int, default=256)
+
     search = subparsers.add_parser("search", help="Search indexed code")
     search.add_argument("query")
     search.add_argument("--project")
@@ -172,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
             result = index.sync(args.source)
         elif args.command == "status":
             result = index.status()
+        elif args.command == "embedding-status":
+            result = index.embedding_status(args.backend, model=args.model, dimension=args.dimension)
         elif args.command == "search":
             result = index.search(
                 args.query,

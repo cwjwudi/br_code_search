@@ -87,13 +87,20 @@
 - CLI 与 MCP 共用同一评测实现，避免“测试路径”和实际 AI 调用路径分叉。
 - 保存不含源代码的路径/符号标签，作为后续语义检索混合排序的基线。
 
-## v0.5.0 — 当前版本：可插拔混合检索
+## v0.5.0 — 已完成：可插拔混合检索
 
 - 以可插拔后端接入本地 embedding；默认标准库 hashing 后端离线可运行，`sentence_transformers` 后端支持显式指定本地模型。
 - 将语义、精确词法和 B&R 结构信号统一为可解释的混合排序，并返回各分项分数。
 - 向量按文档内容 hash 和后端 key 缓存到 SQLite，增量同步后只重新编码变化文档。
 - CLI/MCP 增加 `hybrid`/`br_search_hybrid`，保留原有精确和 lexical_structural 工具兼容性。
+- CLI/MCP 提供 embedding runtime 健康检查，不会因为检查可用性而下载或加载模型。
 - 评测集可直接运行 hybrid case，为后续 Qdrant/更大模型后端保留扩展点。
+
+## v0.5.1 — 当前版本：Embedding 运行时诊断
+
+- CLI/MCP 可检查 hashing、SentenceTransformers 和自动选择后端的可用性，不会因为健康检查下载或加载模型。
+- 混合检索默认覆盖完整索引（最多 50,000 个文档），并明确返回离线 fallback、训练模型或自定义后端类型。
+- 允许注册自定义 embedding 工厂，为后续本地模型和 Qdrant 适配保留稳定扩展点。
 
 ## v0.6+ — 验证闭环
 

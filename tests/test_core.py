@@ -322,6 +322,10 @@ class IndexTests(unittest.TestCase):
         self.index.annotate_project("ProjectA", quality="deprecated", do_not_copy=True)
         self.assertEqual(0, self.index.search("DemoProgram")["count"])
         self.assertEqual(1, self.index.search("DemoProgram", quality="deprecated")["count"])
+        known_issue = self.index.annotate_project("ProjectA", quality="normal", known_issue=True)
+        self.assertTrue(known_issue["known_issue"])
+        self.assertTrue(known_issue["do_not_copy"])
+        self.assertEqual(0, self.index.search("DemoProgram")["count"])
 
     def test_project_validation_feedback_is_persisted_and_returned(self) -> None:
         recorded = self.index.record_project_validation(

@@ -261,12 +261,14 @@ class McpServerTests(unittest.TestCase):
                     "method": "tools/call",
                     "params": {
                         "name": "br_annotate_project",
-                        "arguments": {"project": "Sample", "quality": "gold", "verified": True},
+                        "arguments": {"project": "Sample", "quality": "gold", "verified": True, "known_issue": True},
                     },
                 }
             )
             self.assertFalse(annotated["result"]["isError"])
             self.assertEqual("gold", annotated["result"]["structuredContent"]["quality"])
+            self.assertTrue(annotated["result"]["structuredContent"]["known_issue"])
+            self.assertTrue(annotated["result"]["structuredContent"]["do_not_copy"])
 
             validation = server.handle(
                 {

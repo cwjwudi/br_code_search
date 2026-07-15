@@ -230,6 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     annotate.add_argument("--verified", action="store_true")
     annotate.add_argument("--deprecated", action="store_true")
     annotate.add_argument("--do-not-copy", action="store_true")
+    annotate.add_argument("--known-issue", action="store_true", help="Mark known faulty history and force do-not-copy")
     annotate.add_argument("--notes", default="")
 
     validation = subparsers.add_parser("record-validation", help="Record external build/field/compatibility feedback")
@@ -514,6 +515,7 @@ def main(argv: list[str] | None = None) -> int:
                 verified=args.verified,
                 deprecated=args.deprecated,
                 do_not_copy=args.do_not_copy,
+                known_issue=args.known_issue,
                 notes=args.notes,
             )
     except (OSError, ValueError) as exc:

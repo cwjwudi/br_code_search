@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.13.0`.
+Current release: `0.14.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -54,6 +54,7 @@ python -m br_code_search.cli type MC_ACP_ENCOD_REF
 python -m br_code_search.cli references Ready --limit 20
 python -m br_code_search.cli impact Ready --limit 50
 python -m br_code_search.cli annotate-project "2406长虹飞狮" --quality gold --verified --notes "现场验证通过"
+python -m br_code_search.cli annotate-project "历史项目" --known-issue --notes "现场缺陷，不得复用"
 python -m br_code_search.cli search MpAxisBasic --quality gold --verified-only --origin user
 python -m br_code_search.cli evaluate eval/retrieval_queries.json --top-k 5
 python -m br_code_search.cli hybrid "fault restart timeout" --backend hashing --limit 5
@@ -191,8 +192,10 @@ Use `br_search_hybrid` when vector signals are desired.
 Project quality annotations are stored beside the index at
 `var/project_metadata.json`. Supported quality values are `gold`, `normal` and
 `deprecated`; search defaults exclude projects marked `deprecated` or
-`do_not_copy`, and `verified_only=true` restricts results to explicitly
-verified projects.
+`do_not_copy`. `known_issue=true` is persisted as a provenance annotation and
+automatically enforces `do_not_copy=true`, so known faulty history is not
+silently reused by AI retrieval. `verified_only=true` restricts results to
+explicitly verified projects.
 
 Retrieval evaluation datasets use path/symbol labels rather than copying source
 code. Run the bundled baseline with `br_code_search.cli evaluate`; the same

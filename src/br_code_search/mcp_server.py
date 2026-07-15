@@ -328,6 +328,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "verified": {"type": "boolean", "default": False},
                 "deprecated": {"type": "boolean", "default": False},
                 "do_not_copy": {"type": "boolean", "default": False},
+                "known_issue": {"type": "boolean", "default": False, "description": "Mark known faulty history and force do_not_copy."},
                 "notes": {"type": "string", "default": ""},
             },
             ["project"],
@@ -612,6 +613,7 @@ class McpServer:
                 verified=arguments.get("verified", False),
                 deprecated=arguments.get("deprecated", False),
                 do_not_copy=arguments.get("do_not_copy", False),
+                known_issue=arguments.get("known_issue", False),
                 notes=arguments.get("notes", ""),
             ),
             "br_search_code": lambda: self.index.search(

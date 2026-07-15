@@ -830,11 +830,13 @@ class CodeSearchIndex:
         quality = str(value.get("quality", "normal"))
         if quality not in {"gold", "normal", "deprecated"}:
             quality = "normal"
+        known_issue = bool(value.get("known_issue", False))
         return {
             "quality": quality,
             "verified": bool(value.get("verified", False)),
             "deprecated": bool(value.get("deprecated", quality == "deprecated")),
-            "do_not_copy": bool(value.get("do_not_copy", False)),
+            "known_issue": known_issue,
+            "do_not_copy": bool(value.get("do_not_copy", False)) or known_issue,
             "notes": str(value.get("notes", "")),
             "validation_records": _validation_records(value.get("validation_records", [])),
         }
@@ -847,12 +849,15 @@ class CodeSearchIndex:
         verified: bool = False,
         deprecated: bool = False,
         do_not_copy: bool = False,
+        known_issue: bool = False,
         notes: str = "",
     ) -> dict[str, Any]:
         if quality not in {"gold", "normal", "deprecated"}:
             raise ValueError("quality must be one of: gold, normal, deprecated")
         if quality == "deprecated":
             deprecated = True
+        if known_issue:
+            do_not_copy = True
         with closing(self.connect()) as connection, connection:
             self._initialize(connection)
             row = connection.execute(
@@ -867,6 +872,7 @@ class CodeSearchIndex:
             "quality": quality,
             "verified": bool(verified),
             "deprecated": bool(deprecated),
+            "known_issue": bool(known_issue),
             "do_not_copy": bool(do_not_copy),
             "notes": notes,
             "validation_records": _validation_records(existing_records),
@@ -1344,7 +1350,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.13.0",
+                "tool_version": "0.14.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1480,7 +1486,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.13.0",
+                "tool_version": "0.14.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -2560,6 +2566,10 @@ class CodeSearchIndex:
         project_annotations: dict[str, dict[str, Any]] = {}
         quality_counts: dict[str, int] = {}
         task_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        annotation_cache = {
+            project_name: self._project_annotation(project_name)
+            for project_name in {str(item["project"]) for item in references}
+        }
         with closing(self.connect()) as connection, connection:
             for project_name, path in {(str(item["project"]), str(item["path"])) for item in references}:
                 project_row = connection.execute(
@@ -2580,6 +2590,7 @@ class CodeSearchIndex:
             affected_projects.add(project_name)
             quality = str(reference.get("quality") or "normal")
             quality_counts[quality] = quality_counts.get(quality, 0) + 1
+            annotation = annotation_cache.get(project_name, {})
             project_annotations.setdefault(
                 project_name,
                 {
@@ -2587,6 +2598,7 @@ class CodeSearchIndex:
                     "verified": bool(reference.get("verified")),
                     "deprecated": bool(reference.get("deprecated")),
                     "do_not_copy": bool(reference.get("do_not_copy")),
+                    "known_issue": bool(annotation.get("known_issue", False)),
                 },
             )
             tasks = task_cache.get((project_name, path), [])
@@ -2882,6 +2894,7 @@ class CodeSearchIndex:
             "verified": bool(row["verified"]),
             "deprecated": bool(row["deprecated"]),
             "do_not_copy": bool(row["do_not_copy"]),
+            "known_issue": bool(self._project_annotation(row["name"]).get("known_issue", False)),
             "notes": row["notes"],
             "metadata_path": str(self.project_metadata_path),
             "metadata": json.loads(row["metadata_json"]),

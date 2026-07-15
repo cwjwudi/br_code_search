@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.4.2`.
+Current release: `0.4.3`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -31,6 +31,7 @@ python -m br_code_search.cli status
 python -m br_code_search.cli search MpAxisBasic --origin user
 python -m br_code_search.cli find-symbol fbHomeMaster
 python -m br_code_search.cli similar "timeout reset alarm cylinder" --origin user
+python -m br_code_search.cli search MpAxisBasic --as-version 4.12 --ar-version H4.93 --cpu-model X20CP1686X --library mapp6D
 python -m br_code_search.cli tasks "2406长虹飞狮"
 python -m br_code_search.cli type MC_ACP_ENCOD_REF
 python -m br_code_search.cli references Ready --limit 20
@@ -86,6 +87,9 @@ Example MCP client configuration:
 - `br_get_type_definition`: retrieve indexed `TYPE` declarations
 - `br_find_references`: return whole-identifier, line-level references with declaration/use and read/write/call/member access classification
 
+`br_search_code`, `br_find_similar_code` and `br_find_symbol` accept optional
+`as_version`, `ar_version`, `cpu_model`, `library` and `library_version` filters.
+
 `br_get_program_context` is the preferred tool before an AI writes code. It
 returns the matched source plus related `Init`, `Cyclic`, `Exit`, action,
 variable and type files from the same module directory, and any matching `.sw`
@@ -97,7 +101,7 @@ or library `TYPE`/`FUNCTION_BLOCK` symbols.
 
 This version performs lexical search, incremental synchronization, tolerant structural parsing,
 basic `.sw` TaskClass/Task extraction, VAR declaration/type resolution and line-level identifier references. It
-does not claim compiler-grade AST accuracy, semantic/vector search or complete
+supports AS/AR/CPU/technology-package filters and quality-aware ranking, but does not claim compiler-grade AST accuracy, semantic/vector search or complete
 cross-reference analysis. Cycle values are returned only when an explicit cycle/period
 attribute exists in the source configuration. Parse fallbacks are exposed
 as ordinary file units so source remains searchable even when a dialect is not

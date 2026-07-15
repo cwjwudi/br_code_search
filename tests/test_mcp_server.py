@@ -16,7 +16,11 @@ class McpServerTests(unittest.TestCase):
             logical = source / "Logical"
             logical.mkdir(parents=True)
             (source / "Sample.apj").write_text(
-                '<?xml version="1.0"?><Project Version="1.0" />', encoding="utf-8"
+                '<?xml version="1.0"?><?AutomationStudio Version="4.12"?><Project Version="1.0" />', encoding="utf-8"
+            )
+            (source / "Cpu.pkg").write_text(
+                '<Cpu><Configuration ModuleId="X20CP1585"><AutomationRuntime Version="H4.93" /></Configuration></Cpu>',
+                encoding="utf-8",
             )
             (logical / "Cyclic.st").write_text(
                 "PROGRAM SearchMe\nValue := 42;\nEND_PROGRAM\n", encoding="utf-8"
@@ -55,7 +59,12 @@ class McpServerTests(unittest.TestCase):
                     "method": "tools/call",
                     "params": {
                         "name": "br_search_code",
-                        "arguments": {"query": "Value := 42", "origin": "user"},
+                        "arguments": {
+                            "query": "Value := 42",
+                            "origin": "user",
+                            "ar_version": "H4.93",
+                            "cpu_model": "X20CP1585",
+                        },
                     },
                 }
             )

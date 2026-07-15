@@ -47,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--project")
     search.add_argument("--origin", choices=["all", "user", "library", "physical"], default="all")
     search.add_argument("--language")
+    search.add_argument("--as-version")
+    search.add_argument("--ar-version")
+    search.add_argument("--cpu-model")
+    search.add_argument("--library")
+    search.add_argument("--library-version")
     search.add_argument("--quality", choices=["gold", "normal", "deprecated"])
     search.add_argument("--verified-only", action="store_true")
     search.add_argument("--include-deprecated", action="store_true")
@@ -57,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     symbol.add_argument("name")
     symbol.add_argument("--project")
     symbol.add_argument("--type", dest="symbol_type")
+    symbol.add_argument("--as-version")
+    symbol.add_argument("--ar-version")
+    symbol.add_argument("--cpu-model")
+    symbol.add_argument("--library")
+    symbol.add_argument("--library-version")
     symbol.add_argument("--quality", choices=["gold", "normal", "deprecated"])
     symbol.add_argument("--verified-only", action="store_true")
     symbol.add_argument("--include-deprecated", action="store_true")
@@ -76,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
     similar.add_argument("--project")
     similar.add_argument("--origin", choices=["all", "user", "library", "physical"], default="all")
     similar.add_argument("--language")
+    similar.add_argument("--as-version")
+    similar.add_argument("--ar-version")
+    similar.add_argument("--cpu-model")
+    similar.add_argument("--library")
+    similar.add_argument("--library-version")
     similar.add_argument("--quality", choices=["gold", "normal", "deprecated"])
     similar.add_argument("--verified-only", action="store_true")
     similar.add_argument("--include-deprecated", action="store_true")
@@ -125,6 +140,11 @@ def main(argv: list[str] | None = None) -> int:
                 project=args.project,
                 origin=args.origin,
                 language=args.language,
+                as_version=args.as_version,
+                ar_version=args.ar_version,
+                cpu_model=args.cpu_model,
+                library=args.library,
+                library_version=args.library_version,
                 quality=args.quality,
                 verified_only=args.verified_only,
                 include_deprecated=args.include_deprecated,
@@ -136,6 +156,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.name,
                 project=args.project,
                 symbol_type=args.symbol_type,
+                as_version=args.as_version,
+                ar_version=args.ar_version,
+                cpu_model=args.cpu_model,
+                library=args.library,
+                library_version=args.library_version,
                 quality=args.quality,
                 verified_only=args.verified_only,
                 include_deprecated=args.include_deprecated,
@@ -152,6 +177,11 @@ def main(argv: list[str] | None = None) -> int:
                 project=args.project,
                 origin=args.origin,
                 language=args.language,
+                as_version=args.as_version,
+                ar_version=args.ar_version,
+                cpu_model=args.cpu_model,
+                library=args.library,
+                library_version=args.library_version,
                 quality=args.quality,
                 verified_only=args.verified_only,
                 include_deprecated=args.include_deprecated,

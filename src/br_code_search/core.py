@@ -88,6 +88,8 @@ CREATE TABLE IF NOT EXISTS projects (
     project_file TEXT,
     as_version TEXT,
     project_version TEXT,
+    automation_runtime_versions TEXT NOT NULL DEFAULT '[]',
+    cpu_models TEXT NOT NULL DEFAULT '[]',
     description TEXT,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     quality TEXT NOT NULL DEFAULT 'normal',
@@ -488,6 +490,81 @@ def parse_project_file(path: Path) -> dict[str, Any]:
     }
 
 
+def parse_project_environment(project_root: Path) -> dict[str, list[str]]:
+    """Collect AR firmware and CPU identifiers from Automation Studio packages."""
+    automation_runtime_versions: set[str] = set()
+    cpu_models: set[str] = set()
+    for path in sorted(project_root.rglob("*.pkg")):
+        try:
+            text, _ = read_source(path)
+        except OSError:
+            continue
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError:
+            root = None
+        if root is not None:
+            for element in root.iter():
+                element_name = _xml_local_name(element.tag)
+                if element_name == "AutomationRuntime":
+                    version = element.attrib.get("Version")
+                    if version:
+                        automation_runtime_versions.add(version.strip())
+                elif element_name == "Configuration":
+                    module_id = element.attrib.get("ModuleId")
+                    if module_id:
+                        cpu_models.add(module_id.strip())
+                elif element_name == "Object" and element.attrib.get("Type", "").casefold() == "cpu":
+                    value = (element.text or "").strip()
+                    if value:
+                        cpu_models.add(value)
+        else:
+            automation_runtime_versions.update(
+                match.strip()
+                for match in re.findall(r"<AutomationRuntime\b[^>]*\bVersion=\"([^\"]+)\"", text, re.IGNORECASE)
+            )
+            cpu_models.update(
+                match.strip()
+                for match in re.findall(r"<Configuration\b[^>]*\bModuleId=\"([^\"]+)\"", text, re.IGNORECASE)
+            )
+            cpu_models.update(
+                match.strip()
+                for match in re.findall(r"<Object\b[^>]*\bType=\"Cpu\"[^>]*>([^<]+)</Object>", text, re.IGNORECASE)
+            )
+    return {
+        "automation_runtime_versions": sorted(item for item in automation_runtime_versions if item),
+        "cpu_models": sorted(item for item in cpu_models if item),
+    }
+
+
+def add_project_version_filters(
+    filters: list[str],
+    parameters: list[Any],
+    *,
+    as_version: str | None = None,
+    ar_version: str | None = None,
+    cpu_model: str | None = None,
+    library: str | None = None,
+    library_version: str | None = None,
+) -> None:
+    """Append optional project environment filters to a document query."""
+    if as_version and as_version.strip():
+        filters.append("p.as_version LIKE ? COLLATE NOCASE")
+        parameters.append(f"{as_version.strip()}%")
+    if ar_version and ar_version.strip():
+        filters.append("lower(p.automation_runtime_versions) LIKE ?")
+        parameters.append(f"%{ar_version.strip().casefold()}%")
+    if cpu_model and cpu_model.strip():
+        filters.append("lower(p.cpu_models) LIKE ?")
+        parameters.append(f"%{cpu_model.strip().casefold()}%")
+    if library and library.strip():
+        filters.append("lower(p.metadata_json) LIKE ?")
+        parameters.append(f'%"{library.strip().casefold()}"%')
+    if library_version and library_version.strip():
+        filters.append("lower(p.metadata_json) LIKE ?")
+        parameters.append(f'%"{library_version.strip().casefold()}"%')
+
+
 def _should_index(path: Path, source_root: Path) -> bool:
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         return False
@@ -521,6 +598,8 @@ class CodeSearchIndex:
             row[1] for row in connection.execute("PRAGMA table_info(projects)").fetchall()
         }
         migrations = {
+            "automation_runtime_versions": "TEXT NOT NULL DEFAULT '[]'",
+            "cpu_models": "TEXT NOT NULL DEFAULT '[]'",
             "quality": "TEXT NOT NULL DEFAULT 'normal'",
             "verified": "INTEGER NOT NULL DEFAULT 0",
             "deprecated": "INTEGER NOT NULL DEFAULT 0",
@@ -710,21 +789,25 @@ class CodeSearchIndex:
             project_ids: dict[Path, int] = {}
             for project_root, project_file in project_roots.items():
                 metadata = parse_project_file(project_file) if project_file else {}
+                metadata.update(parse_project_environment(project_root))
                 annotation = self._project_annotation(project_root.name)
                 relative_project_file = (
                     project_file.relative_to(project_root).as_posix() if project_file else None
                 )
                 cursor = connection.execute(
                     """INSERT INTO projects
-                    (name, root_path, project_file, as_version, project_version, description, metadata_json,
+                    (name, root_path, project_file, as_version, project_version, automation_runtime_versions, cpu_models,
+                     description, metadata_json,
                      quality, verified, deprecated, do_not_copy, notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         project_root.name,
                         str(project_root),
                         relative_project_file,
                         metadata.get("as_version"),
                         metadata.get("project_version"),
+                        json.dumps(metadata.get("automation_runtime_versions", []), ensure_ascii=False),
+                        json.dumps(metadata.get("cpu_models", []), ensure_ascii=False),
                         metadata.get("description"),
                         json.dumps(metadata, ensure_ascii=False),
                         annotation["quality"], int(annotation["verified"]), int(annotation["deprecated"]),
@@ -758,10 +841,10 @@ class CodeSearchIndex:
                 indexed_files += 1
                 indexed_documents += documents
             meta = {
-                "schema_version": "4",
+                "schema_version": "5",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.2",
+                "tool_version": "0.4.3",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
@@ -803,17 +886,22 @@ class CodeSearchIndex:
             project_ids: dict[Path, int] = {}
             for project_root, project_file in project_roots.items():
                 metadata = parse_project_file(project_file) if project_file else {}
+                metadata.update(parse_project_environment(project_root))
                 annotation = self._project_annotation(project_root.name)
                 relative_project_file = project_file.relative_to(project_root).as_posix() if project_file else None
                 project_id = existing_projects.get(project_root)
                 if project_id is None:
                     cursor = connection.execute(
                         """INSERT INTO projects
-                        (name, root_path, project_file, as_version, project_version, description, metadata_json,
+                        (name, root_path, project_file, as_version, project_version, automation_runtime_versions, cpu_models,
+                         description, metadata_json,
                          quality, verified, deprecated, do_not_copy, notes)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (project_root.name, str(project_root), relative_project_file, metadata.get("as_version"),
-                         metadata.get("project_version"), metadata.get("description"),
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         (project_root.name, str(project_root), relative_project_file, metadata.get("as_version"),
+                         metadata.get("project_version"),
+                         json.dumps(metadata.get("automation_runtime_versions", []), ensure_ascii=False),
+                         json.dumps(metadata.get("cpu_models", []), ensure_ascii=False),
+                         metadata.get("description"),
                          json.dumps(metadata, ensure_ascii=False), annotation["quality"], int(annotation["verified"]),
                          int(annotation["deprecated"]), int(annotation["do_not_copy"]), annotation["notes"]),
                     )
@@ -821,10 +909,14 @@ class CodeSearchIndex:
                 else:
                     connection.execute(
                         """UPDATE projects SET name=?, project_file=?, as_version=?, project_version=?,
-                        description=?, metadata_json=?, quality=?, verified=?, deprecated=?, do_not_copy=?, notes=?
+                        automation_runtime_versions=?, cpu_models=?, description=?, metadata_json=?,
+                        quality=?, verified=?, deprecated=?, do_not_copy=?, notes=?
                         WHERE id=?""",
                         (project_root.name, relative_project_file, metadata.get("as_version"),
-                         metadata.get("project_version"), metadata.get("description"),
+                         metadata.get("project_version"),
+                         json.dumps(metadata.get("automation_runtime_versions", []), ensure_ascii=False),
+                         json.dumps(metadata.get("cpu_models", []), ensure_ascii=False),
+                         metadata.get("description"),
                          json.dumps(metadata, ensure_ascii=False), annotation["quality"], int(annotation["verified"]),
                          int(annotation["deprecated"]), int(annotation["do_not_copy"]), annotation["notes"], project_id),
                     )
@@ -872,7 +964,7 @@ class CodeSearchIndex:
             for project_root, project_id in list(existing_projects.items()):
                 if project_root not in project_ids:
                     connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
-            meta.update({"schema_version": "4", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.2"})
+            meta.update({"schema_version": "5", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.3"})
             connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
@@ -942,6 +1034,22 @@ class CodeSearchIndex:
             if key in row.keys():
                 value = row[key]
                 payload[key] = bool(value) if key in {"verified", "deprecated", "do_not_copy"} else value
+        if "as_version" in row.keys():
+            payload["as_version"] = row["as_version"]
+        if "project_version" in row.keys():
+            payload["project_version"] = row["project_version"]
+        for column, output in (("automation_runtime_versions", "ar_versions"), ("cpu_models", "cpu_models")):
+            if column in row.keys():
+                try:
+                    payload[output] = json.loads(row[column] or "[]")
+                except (TypeError, json.JSONDecodeError):
+                    payload[output] = []
+        if "metadata_json" in row.keys():
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            payload["technology_packages"] = metadata.get("technology_packages", {})
         if include_source:
             source = row["content"]
             payload["source"] = source[:max_chars]
@@ -959,6 +1067,11 @@ class CodeSearchIndex:
         project: str | None = None,
         origin: str | None = None,
         language: str | None = None,
+        as_version: str | None = None,
+        ar_version: str | None = None,
+        cpu_model: str | None = None,
+        library: str | None = None,
+        library_version: str | None = None,
         quality: str | None = None,
         verified_only: bool = False,
         include_deprecated: bool = False,
@@ -984,6 +1097,15 @@ class CodeSearchIndex:
         if language:
             filters.append("d.language = ?")
             parameters.append(language)
+        add_project_version_filters(
+            filters,
+            parameters,
+            as_version=as_version,
+            ar_version=ar_version,
+            cpu_model=cpu_model,
+            library=library,
+            library_version=library_version,
+        )
         if quality:
             filters.append("p.quality = ?")
             parameters.append(quality)
@@ -994,6 +1116,7 @@ class CodeSearchIndex:
         filter_sql = (" AND " + " AND ".join(filters)) if filters else ""
         base_columns = """d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
             d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+            p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
             p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes"""
         rows_by_id: dict[int, sqlite3.Row] = {}
         with closing(self.connect()) as connection, connection:
@@ -1010,6 +1133,8 @@ class CodeSearchIndex:
                               WHEN 'c_function' THEN 0 WHEN 'source_file' THEN 0
                               WHEN 'variable_block' THEN 1 WHEN 'data_type' THEN 1
                               WHEN 'variable' THEN 2 ELSE 3 END,
+                         CASE p.quality WHEN 'gold' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+                         p.verified DESC,
                          CASE d.origin WHEN 'user' THEN 0 WHEN 'library' THEN 1 ELSE 2 END,
                          length(d.content)
                 LIMIT ?""",
@@ -1030,6 +1155,8 @@ class CodeSearchIndex:
                                   WHEN 'c_function' THEN 0 WHEN 'source_file' THEN 0
                                   WHEN 'variable_block' THEN 1 WHEN 'data_type' THEN 1
                                   WHEN 'variable' THEN 2 ELSE 3 END,
+                             CASE p.quality WHEN 'gold' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+                             p.verified DESC,
                              bm25(documents_fts),
                              CASE d.origin WHEN 'user' THEN 0 WHEN 'library' THEN 1 ELSE 2 END
                     LIMIT ?""",
@@ -1041,7 +1168,9 @@ class CodeSearchIndex:
         return {
             "ok": True,
             "query": query,
-            "filters": {"project": project, "origin": origin, "language": language, "quality": quality,
+            "filters": {"project": project, "origin": origin, "language": language,
+                        "as_version": as_version, "ar_version": ar_version, "cpu_model": cpu_model,
+                        "library": library, "library_version": library_version, "quality": quality,
                         "verified_only": verified_only, "include_deprecated": include_deprecated},
             "count": len(rows),
             "results": [
@@ -1058,6 +1187,11 @@ class CodeSearchIndex:
         project: str | None = None,
         origin: str | None = None,
         language: str | None = None,
+        as_version: str | None = None,
+        ar_version: str | None = None,
+        cpu_model: str | None = None,
+        library: str | None = None,
+        library_version: str | None = None,
         quality: str | None = None,
         verified_only: bool = False,
         include_deprecated: bool = False,
@@ -1099,6 +1233,15 @@ class CodeSearchIndex:
             if language:
                 filters.append("d.language = ?")
                 params.append(language)
+            add_project_version_filters(
+                filters,
+                params,
+                as_version=as_version,
+                ar_version=ar_version,
+                cpu_model=cpu_model,
+                library=library,
+                library_version=library_version,
+            )
             if quality:
                 filters.append("p.quality = ?")
                 params.append(quality)
@@ -1112,6 +1255,7 @@ class CodeSearchIndex:
             rows = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN projects p ON p.id=d.project_id
                 WHERE documents_fts MATCH ?""" + (" AND " + " AND ".join(filters) if filters else "") +
@@ -1142,6 +1286,12 @@ class CodeSearchIndex:
                 score -= 0.08
             if row["origin"] == "user":
                 score += 0.02
+            if row["quality"] == "gold":
+                score += 0.08
+            elif row["quality"] == "normal":
+                score += 0.02
+            if row["verified"]:
+                score += 0.04
             scored.append((score, row))
         scored.sort(key=lambda item: (-item[0], item[1]["project_name"], item[1]["relative_path"], item[1]["start_line"]))
         results = []
@@ -1154,7 +1304,9 @@ class CodeSearchIndex:
             "mode": "lexical_structural",
             "query": query if reference is None else None,
             "reference_document_id": reference_document_id,
-            "filters": {"project": project, "origin": origin, "language": language, "quality": quality,
+            "filters": {"project": project, "origin": origin, "language": language,
+                        "as_version": as_version, "ar_version": ar_version, "cpu_model": cpu_model,
+                        "library": library, "library_version": library_version, "quality": quality,
                         "verified_only": verified_only, "include_deprecated": include_deprecated},
             "count": len(results),
             "results": results,
@@ -1167,6 +1319,11 @@ class CodeSearchIndex:
         *,
         project: str | None = None,
         symbol_type: str | None = None,
+        as_version: str | None = None,
+        ar_version: str | None = None,
+        cpu_model: str | None = None,
+        library: str | None = None,
+        library_version: str | None = None,
         quality: str | None = None,
         verified_only: bool = False,
         include_deprecated: bool = False,
@@ -1181,6 +1338,15 @@ class CodeSearchIndex:
         if symbol_type:
             filters.append("d.symbol_type = ? COLLATE NOCASE")
             params.append(symbol_type)
+        add_project_version_filters(
+            filters,
+            params,
+            as_version=as_version,
+            ar_version=ar_version,
+            cpu_model=cpu_model,
+            library=library,
+            library_version=library_version,
+        )
         if quality:
             filters.append("p.quality = ?")
             params.append(quality)
@@ -1192,10 +1358,13 @@ class CodeSearchIndex:
             rows = connection.execute(
                 f"""SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
                 WHERE {' AND '.join(filters)}
                 ORDER BY CASE WHEN d.symbol_name = ? COLLATE NOCASE THEN 0 ELSE 1 END,
+                         CASE p.quality WHEN 'gold' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+                         p.verified DESC,
                          CASE d.origin WHEN 'user' THEN 0 WHEN 'library' THEN 1 ELSE 2 END,
                          p.name, d.relative_path LIMIT ?""",
                 [*params, name.strip(), max(1, min(int(limit), 100))],
@@ -1203,6 +1372,18 @@ class CodeSearchIndex:
         return {
             "ok": True,
             "name": name,
+            "filters": {
+                "project": project,
+                "as_version": as_version,
+                "ar_version": ar_version,
+                "cpu_model": cpu_model,
+                "library": library,
+                "library_version": library_version,
+                "symbol_type": symbol_type,
+                "quality": quality,
+                "verified_only": verified_only,
+                "include_deprecated": include_deprecated,
+            },
             "count": len(rows),
             "results": [self._row_payload(row, include_source=False) for row in rows],
         }
@@ -1213,6 +1394,7 @@ class CodeSearchIndex:
             row = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?""",
                 (int(document_id),),
@@ -1228,6 +1410,7 @@ class CodeSearchIndex:
             primary = connection.execute(
                 """SELECT d.id, d.project_id, p.name AS project_name, d.relative_path, d.language,
                 d.origin, d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?""",
                 (int(document_id),),
@@ -1239,6 +1422,7 @@ class CodeSearchIndex:
             related = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
                 WHERE d.project_id=? AND d.id<>? AND d.relative_path LIKE ?
@@ -1415,6 +1599,7 @@ class CodeSearchIndex:
             rows = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
                 WHERE """ + " AND ".join(clauses) + " ORDER BY p.name, d.relative_path",
@@ -1443,6 +1628,7 @@ class CodeSearchIndex:
             rows = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
                 WHERE """ + " AND ".join(clauses) + " ORDER BY p.name, d.relative_path, d.start_line LIMIT 500",
@@ -1482,6 +1668,9 @@ class CodeSearchIndex:
                             "origin": row["origin"],
                             "symbol": row["symbol_name"],
                             "symbol_type": row["symbol_type"],
+                            "as_version": row["as_version"],
+                            "ar_versions": json.loads(row["automation_runtime_versions"] or "[]"),
+                            "cpu_models": json.loads(row["cpu_models"] or "[]"),
                             "line": absolute_line,
                             "text": line.strip()[:500],
                             "relation": relation,
@@ -1556,6 +1745,8 @@ class CodeSearchIndex:
             "project_file": row["project_file"],
             "as_version": row["as_version"],
             "project_version": row["project_version"],
+            "ar_versions": json.loads(row["automation_runtime_versions"] or "[]"),
+            "cpu_models": json.loads(row["cpu_models"] or "[]"),
             "description": row["description"],
             "quality": row["quality"],
             "verified": bool(row["verified"]),

@@ -96,6 +96,11 @@ class IndexTests(unittest.TestCase):
             '<TechnologyPackages><mapp Version="5.24.1" /></TechnologyPackages></Project>',
             encoding="utf-8",
         )
+        (self.project / "Physical" / "Cpu.pkg").parent.mkdir(parents=True, exist_ok=True)
+        (self.project / "Physical" / "Cpu.pkg").write_text(
+            """<Cpu><Configuration ModuleId=\"X20CP1585\"><AutomationRuntime Version=\"H4.93\" /></Configuration></Cpu>""",
+            encoding="utf-8",
+        )
         (module / "Cyclic.st").write_text(PROGRAM, encoding="utf-8")
         (module / "Init.st").write_text(
             "PROGRAM _INIT\nReady := TRUE;\nEND_PROGRAM\n", encoding="utf-8"
@@ -130,6 +135,8 @@ class IndexTests(unittest.TestCase):
         overview = self.index.project_overview("ProjectA")
         self.assertEqual("4.12.5.95 SP", overview["as_version"])
         self.assertEqual("5.24.1", overview["metadata"]["technology_packages"]["mapp"])
+        self.assertEqual(["H4.93"], overview["ar_versions"])
+        self.assertEqual(["X20CP1585"], overview["cpu_models"])
 
     def test_search_and_origin_filter(self) -> None:
         result = self.index.search("MpAxisBasic", origin="user")
@@ -137,6 +144,15 @@ class IndexTests(unittest.TestCase):
         self.assertEqual("DemoProgram", result["results"][0]["symbol"])
         library = self.index.search("MpAxisBasic", origin="library")
         self.assertEqual("library", library["results"][0]["origin"])
+        filtered = self.index.search(
+            "DemoProgram",
+            as_version="4.12",
+            ar_version="H4.93",
+            cpu_model="X20CP1585",
+            library="mapp",
+            library_version="5.24.1",
+        )
+        self.assertEqual(1, filtered["count"])
 
     def test_find_symbol_and_context(self) -> None:
         symbols = self.index.find_symbol("DemoProgram")

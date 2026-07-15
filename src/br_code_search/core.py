@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import xml.etree.ElementTree as ET
 from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SUPPORTED_EXTENSIONS = {".st", ".fun", ".var", ".typ", ".c", ".h", ".apj", ".pkg"}
+SUPPORTED_EXTENSIONS = {".st", ".fun", ".var", ".typ", ".c", ".h", ".apj", ".pkg", ".sw"}
 IGNORED_DIRECTORIES = {
     ".git",
     ".svn",
@@ -80,6 +81,20 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS idx_documents_symbol ON documents(symbol_name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_documents_project_path ON documents(project_id, relative_path);
 CREATE INDEX IF NOT EXISTS idx_documents_origin ON documents(origin);
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    software_path TEXT NOT NULL,
+    task_class TEXT NOT NULL,
+    task_name TEXT NOT NULL,
+    source TEXT NOT NULL,
+    language TEXT,
+    description TEXT NOT NULL DEFAULT '',
+    number TEXT,
+    cycle_time_us INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_source ON tasks(project_id, source);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_name ON tasks(project_id, task_name COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS source_files (
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     relative_path TEXT NOT NULL,
@@ -148,6 +163,7 @@ def language_for(path: Path) -> str:
         ".h": "c_header",
         ".apj": "automation_studio_project",
         ".pkg": "automation_studio_package",
+        ".sw": "automation_studio_software",
     }[path.suffix.lower()]
 
 
@@ -273,6 +289,50 @@ def parse_c_units(text: str) -> list[ParsedUnit]:
     return units
 
 
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _cycle_value(attributes: dict[str, str]) -> int | None:
+    for key in ("CycleTimeUs", "CycleTime", "PeriodUs", "Period", "IntervalUs", "Interval"):
+        value = attributes.get(key)
+        if not value:
+            continue
+        match = re.search(r"-?\d+", value)
+        if match:
+            return int(match.group(0))
+    return None
+
+
+def parse_software_tasks(text: str, relative_path: str) -> list[dict[str, Any]]:
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+    tasks: list[dict[str, Any]] = []
+    for task_class in root.iter():
+        if _xml_local_name(task_class.tag) != "TaskClass":
+            continue
+        class_name = task_class.attrib.get("Name", "")
+        for task in task_class:
+            if _xml_local_name(task.tag) != "Task":
+                continue
+            attrs = dict(task.attrib)
+            tasks.append(
+                {
+                    "software_path": relative_path,
+                    "task_class": class_name,
+                    "task_name": attrs.get("Name", ""),
+                    "source": attrs.get("Source", ""),
+                    "language": attrs.get("Language"),
+                    "description": attrs.get("Description", ""),
+                    "number": attrs.get("Number"),
+                    "cycle_time_us": _cycle_value(attrs),
+                }
+            )
+    return tasks
+
+
 def parse_units(path: Path, text: str) -> list[ParsedUnit]:
     suffix = path.suffix.lower()
     if suffix in {".st", ".fun"}:
@@ -297,6 +357,7 @@ def parse_units(path: Path, text: str) -> list[ParsedUnit]:
         ".h": "header_file",
         ".apj": "project_metadata",
         ".pkg": "package_metadata",
+        ".sw": "software_configuration",
     }[suffix]
     return [ParsedUnit(path.stem, fallback_type, 1, max(1, len(lines)), text)]
 
@@ -454,6 +515,10 @@ class CodeSearchIndex:
             "DELETE FROM source_files WHERE project_id=? AND relative_path=?",
             (project_id, relative_path),
         )
+        connection.execute(
+            "DELETE FROM tasks WHERE project_id=? AND software_path=?",
+            (project_id, relative_path),
+        )
 
     def _index_file(
         self,
@@ -495,6 +560,27 @@ class CodeSearchIndex:
                 "VALUES (?, ?, ?, ?, ?)",
                 (document_id, unit.symbol_name or "", relative_path, project_name, unit.content),
             )
+        if path.suffix.lower() == ".sw":
+            task_rows = parse_software_tasks(text, relative_path)
+            connection.executemany(
+                """INSERT INTO tasks
+                (project_id, software_path, task_class, task_name, source, language, description, number, cycle_time_us)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        project_id,
+                        item["software_path"],
+                        item["task_class"],
+                        item["task_name"],
+                        item["source"],
+                        item["language"],
+                        item["description"],
+                        item["number"],
+                        item["cycle_time_us"],
+                    )
+                    for item in task_rows
+                ],
+            )
         stat = path.stat()
         connection.execute(
             """INSERT OR REPLACE INTO source_files
@@ -514,6 +600,7 @@ class CodeSearchIndex:
             self._initialize(connection)
             connection.execute("DELETE FROM documents_fts")
             connection.execute("DELETE FROM documents")
+            connection.execute("DELETE FROM tasks")
             connection.execute("DELETE FROM projects")
             project_ids: dict[Path, int] = {}
             for project_root, project_file in project_roots.items():
@@ -566,14 +653,15 @@ class CodeSearchIndex:
                 indexed_files += 1
                 indexed_documents += documents
             meta = {
-                "schema_version": "3",
+                "schema_version": "4",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.3.0",
+                "tool_version": "0.4.0",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
             )
+            task_count = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
         return {
             "ok": True,
             "source_root": str(root),
@@ -581,6 +669,7 @@ class CodeSearchIndex:
             "projects": len(project_ids),
             "files": indexed_files,
             "documents": indexed_documents,
+            "tasks": task_count,
             "warnings": warnings[:50],
         }
 
@@ -678,13 +767,14 @@ class CodeSearchIndex:
             for project_root, project_id in list(existing_projects.items()):
                 if project_root not in project_ids:
                     connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
-            meta.update({"schema_version": "3", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.3.0"})
+            meta.update({"schema_version": "4", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.0"})
             connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            task_count = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
         return {
             "ok": True, "mode": "sync", "source_root": str(root), "database": str(self.database_path),
-            "projects": project_count, "documents": document_count, "documents_added": documents_added,
+            "projects": project_count, "documents": document_count, "tasks": task_count, "documents_added": documents_added,
             "added_files": added, "changed_files": changed, "removed_files": len(stale),
             "skipped_files": skipped, "warnings": warnings[:50],
         }
@@ -697,6 +787,7 @@ class CodeSearchIndex:
             meta = {row["key"]: row["value"] for row in connection.execute("SELECT key, value FROM meta")}
             projects = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             documents = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            tasks = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
             files = connection.execute("SELECT COUNT(DISTINCT project_id || ':' || relative_path) FROM documents").fetchone()[0]
             origins = {
                 row["origin"]: row["count"]
@@ -722,6 +813,7 @@ class CodeSearchIndex:
             "projects": projects,
             "files": files,
             "documents": documents,
+            "tasks": tasks,
             "documents_by_origin": origins,
             "projects_by_quality": quality_counts,
             "verified_projects": verified_projects,
@@ -1051,6 +1143,7 @@ class CodeSearchIndex:
                     d.relative_path, d.start_line""",
                 (primary["project_id"], int(document_id), prefix + "%"),
             ).fetchall()
+            tasks = self._tasks_for_path(connection, int(primary["project_id"]), primary["relative_path"])
         primary_payload = self._row_payload(primary, include_source=True, max_chars=budget)
         used = len(primary_payload.get("source", ""))
         seen_paths = {primary["relative_path"]}
@@ -1069,10 +1162,150 @@ class CodeSearchIndex:
             "ok": True,
             "primary": primary_payload,
             "related_context": context,
+            "tasks": tasks,
             "context_chars": used,
             "context_truncated": used >= budget,
-            "note": "Related context is directory-based in v0.3 and is not a compiler-grade dependency graph.",
+            "note": "Related context combines directory siblings with B&R Task assignments; it is not a compiler-grade dependency graph.",
         }
+
+    @staticmethod
+    def _tasks_for_path(
+        connection: sqlite3.Connection, project_id: int, relative_path: str
+    ) -> list[dict[str, Any]]:
+        parts = list(Path(relative_path).parts)
+        try:
+            logical_index = next(index for index, part in enumerate(parts) if part.casefold() == "logical")
+            module_parts = parts[logical_index + 1 : -1]
+        except StopIteration:
+            module_parts = parts[:-1]
+        module_parts = [part for part in module_parts if part.casefold() not in {"code", "sources"}]
+        file_stem = Path(parts[-1]).stem if parts else ""
+        candidates: list[str] = []
+        if file_stem:
+            candidates.append(".".join([*module_parts, file_stem]).casefold())
+        for end in range(len(module_parts), 0, -1):
+            candidates.append(".".join(module_parts[:end]).casefold())
+        rows = connection.execute(
+            """SELECT task_class, task_name, source, software_path, language, description, number, cycle_time_us
+            FROM tasks WHERE project_id=? ORDER BY task_class, task_name""",
+            (project_id,),
+        ).fetchall()
+        matches: list[dict[str, Any]] = []
+        for row in rows:
+            source_stem = Path(row["source"]).stem.casefold()
+            if any(source_stem == candidate or source_stem.endswith("." + candidate) for candidate in candidates):
+                matches.append(dict(row))
+        return matches
+
+    def get_task_configuration(
+        self, project: str, *, task_name: str | None = None, source: str | None = None
+    ) -> dict[str, Any]:
+        self._ensure_index()
+        clauses = ["p.name=? COLLATE NOCASE"]
+        params: list[Any] = [project]
+        if task_name:
+            clauses.append("t.task_name=? COLLATE NOCASE")
+            params.append(task_name)
+        if source:
+            clauses.append("t.source LIKE ? COLLATE NOCASE")
+            params.append(f"%{source}%")
+        with closing(self.connect()) as connection, connection:
+            rows = connection.execute(
+                """SELECT t.task_class, t.task_name, t.source, t.software_path, t.language,
+                t.description, t.number, t.cycle_time_us, p.name AS project,
+                p.quality, p.verified, p.deprecated, p.do_not_copy
+                FROM tasks t JOIN projects p ON p.id=t.project_id
+                WHERE """ + " AND ".join(clauses) +
+                " ORDER BY t.software_path, t.task_class, t.task_name LIMIT 500",
+                params,
+            ).fetchall()
+        return {
+            "ok": True,
+            "project": project,
+            "count": len(rows),
+            "tasks": [
+                {
+                    **dict(row),
+                    "verified": bool(row["verified"]),
+                    "deprecated": bool(row["deprecated"]),
+                    "do_not_copy": bool(row["do_not_copy"]),
+                }
+                for row in rows
+            ],
+            "cycle_time_note": "Only explicit cycle/period attributes are reported; missing values remain null.",
+        }
+
+    def get_type_definition(self, type_name: str, *, project: str | None = None) -> dict[str, Any]:
+        self._ensure_index()
+        clauses = ["d.symbol_name=? COLLATE NOCASE", "d.symbol_type='data_type'"]
+        params: list[Any] = [type_name]
+        if project:
+            clauses.append("p.name=? COLLATE NOCASE")
+            params.append(project)
+        with closing(self.connect()) as connection, connection:
+            rows = connection.execute(
+                """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
+                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
+                FROM documents d JOIN projects p ON p.id=d.project_id
+                WHERE """ + " AND ".join(clauses) + " ORDER BY p.name, d.relative_path",
+                params,
+            ).fetchall()
+        return {
+            "ok": True,
+            "type_name": type_name,
+            "count": len(rows),
+            "definitions": [self._row_payload(row, include_source=True, max_chars=30000) for row in rows],
+        }
+
+    def find_references(
+        self, name: str, *, project: str | None = None, limit: int = 100
+    ) -> dict[str, Any]:
+        self._ensure_index()
+        name = name.strip()
+        if not name:
+            raise ValueError("name must not be empty")
+        clauses = ["d.content LIKE ?"]
+        params: list[Any] = [f"%{name}%"]
+        if project:
+            clauses.append("p.name=? COLLATE NOCASE")
+            params.append(project)
+        with closing(self.connect()) as connection, connection:
+            rows = connection.execute(
+                """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
+                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
+                FROM documents d JOIN projects p ON p.id=d.project_id
+                WHERE """ + " AND ".join(clauses) + " ORDER BY p.name, d.relative_path, d.start_line LIMIT 500",
+                params,
+            ).fetchall()
+        pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", re.IGNORECASE)
+        references: list[dict[str, Any]] = []
+        for row in rows:
+            for offset, line in enumerate(row["content"].splitlines()):
+                if pattern.search(line):
+                    references.append(
+                        {
+                            "document_id": row["id"],
+                            "project": row["project_name"],
+                            "path": row["relative_path"],
+                            "language": row["language"],
+                            "origin": row["origin"],
+                            "symbol": row["symbol_name"],
+                            "symbol_type": row["symbol_type"],
+                            "line": row["start_line"] + offset,
+                            "text": line.strip()[:500],
+                            "quality": row["quality"],
+                            "verified": bool(row["verified"]),
+                            "deprecated": bool(row["deprecated"]),
+                            "do_not_copy": bool(row["do_not_copy"]),
+                        }
+                    )
+                    if len(references) >= max(1, min(int(limit), 500)):
+                        break
+            if len(references) >= max(1, min(int(limit), 500)):
+                break
+        return {"ok": True, "name": name, "count": len(references), "references": references}
 
     def project_overview(self, project: str) -> dict[str, Any]:
         self._ensure_index()
@@ -1107,6 +1340,23 @@ class CodeSearchIndex:
                     (row["id"],),
                 )
             ]
+            task_rows = [
+                {
+                    "task_class": item["task_class"],
+                    "task_name": item["task_name"],
+                    "source": item["source"],
+                    "software_path": item["software_path"],
+                    "language": item["language"],
+                    "description": item["description"],
+                    "number": item["number"],
+                    "cycle_time_us": item["cycle_time_us"],
+                }
+                for item in connection.execute(
+                    """SELECT task_class, task_name, source, software_path, language, description, number, cycle_time_us
+                    FROM tasks WHERE project_id=? ORDER BY software_path, task_class, task_name LIMIT 500""",
+                    (row["id"],),
+                )
+            ]
         return {
             "ok": True,
             "project": row["name"],
@@ -1125,4 +1375,6 @@ class CodeSearchIndex:
             "documents_by_type": type_counts,
             "documents_by_language": language_counts,
             "top_level_paths": top_paths,
+            "task_count": len(task_rows),
+            "tasks": task_rows,
         }

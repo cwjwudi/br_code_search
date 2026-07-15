@@ -12,7 +12,7 @@ this tool's `var/` directory by default.
 - IEC Structured Text: `.st`, `.fun`
 - Declarations and types: `.var`, `.typ`
 - ANSI C: `.c`, `.h`
-- B&R project/package metadata: `.apj`, `.pkg`
+- B&R project/package metadata: `.apj`, `.pkg`, `.sw`
 
 Generated build directories and binary artifacts are ignored. Results retain
 the project, relative path, source classification, symbol kind and line range.
@@ -29,6 +29,9 @@ python -m br_code_search.cli status
 python -m br_code_search.cli search MpAxisBasic --origin user
 python -m br_code_search.cli find-symbol fbHomeMaster
 python -m br_code_search.cli similar "timeout reset alarm cylinder" --origin user
+python -m br_code_search.cli tasks "2406长虹飞狮"
+python -m br_code_search.cli type MC_ACP_ENCOD_REF
+python -m br_code_search.cli references Ready --limit 20
 python -m br_code_search.cli annotate-project "2406长虹飞狮" --quality gold --verified --notes "现场验证通过"
 python -m br_code_search.cli search MpAxisBasic --quality gold --verified-only --origin user
 ```
@@ -77,17 +80,22 @@ Example MCP client configuration:
 - `br_get_symbol`: retrieve one indexed source unit by document id
 - `br_get_program_context`: retrieve a source unit with bounded sibling context
 - `br_get_project_overview`: summarize one indexed Automation Studio project
+- `br_get_task_configuration`: retrieve `.sw` TaskClass/Task assignments and explicit cycle attributes
+- `br_get_type_definition`: retrieve indexed `TYPE` declarations
+- `br_find_references`: return whole-identifier, line-level references to a symbol or variable
 
 `br_get_program_context` is the preferred tool before an AI writes code. It
 returns the matched source plus related `Init`, `Cyclic`, `Exit`, action,
-variable and type files from the same module directory, within a caller-defined
-character budget.
+variable and type files from the same module directory, and any matching `.sw`
+Task assignment, within a caller-defined character budget.
 
 ## Current limits
 
-This version performs lexical search, incremental synchronization and tolerant structural parsing. It
-does not claim compiler-grade AST accuracy, semantic/vector search, complete
-cross-reference analysis, or task-cycle extraction. Parse fallbacks are exposed
+This version performs lexical search, incremental synchronization, tolerant structural parsing,
+basic `.sw` TaskClass/Task extraction and line-level identifier references. It
+does not claim compiler-grade AST accuracy, semantic/vector search or complete
+cross-reference analysis. Cycle values are returned only when an explicit cycle/period
+attribute exists in the source configuration. Parse fallbacks are exposed
 as ordinary file units so source remains searchable even when a dialect is not
 recognized.
 

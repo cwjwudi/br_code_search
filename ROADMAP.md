@@ -11,7 +11,7 @@
 - 程序上下文和项目概览；
 - 真实三工程样例库索引与 MCP 调用验收。
 
-## v0.2 — 当前版本
+## v0.2 — 已完成
 
 - 增量同步：只更新新增、修改和删除的文件；
 - 记录源文件 hash、大小、修改时间和编码；
@@ -19,7 +19,7 @@
 - 保留“这不是向量语义搜索”的明确结果标注；
 - CLI 和 MCP 都支持同步/相似检索。
 
-## v0.3 — 当前版本：检索质量
+## v0.3 — 已完成：检索质量
 
 - 建立真实查询评测集，记录 Top-K 命中情况；
 - 支持工具侧项目标记 `gold / normal / deprecated / do_not_copy`；
@@ -28,19 +28,19 @@
 - 以独立的 `var/project_metadata.json` 保存标记，不修改参考工程；
 - 完成 SQLite 旧索引的自动列迁移。
 
-尚未完成、安排到后续小版本：
+## v0.4 — 当前版本：B&R 结构理解
 
+- 解析 `.sw` 中的 TaskClass/Task 与源程序归属，并保留显式周期属性；
+- 用 Task 关联补充程序上下文，同时保留目录邻居以保证向后兼容；
+- 增加 `find_references`、`get_type_definition`、`get_task_configuration` MCP 工具；
+- 提供 CLI 的 `tasks`、`type`、`references` 命令；
+- 保持变量/类型单元可检索，并为后续读写关系解析保留扩展点。
+
+后续 v0.4.x 小版本继续完善：
+
+- `.var`、`.typ` 与 ST 使用关系的精细读写/类型引用解析；
 - 结果去重、同文件聚合和质量标签排序；
-- AS、AR、CPU 和库版本过滤；
-- `.var`、`.typ` 与 ST 使用关系的基础解析。
-
-## v0.4 — B&R 结构理解
-
-- 引入或扩展 Structured Text 语法解析器；
-- 解析 PROGRAM/FUNCTION_BLOCK/ACTION 与 Task 的关联；
-- 建立功能块实例、变量读写和类型引用关系；
-- 用符号上下文替换纯目录邻居上下文；
-- 增加 `find_references`、`get_type_definition` 等 MCP 工具。
+- AS、AR、CPU 和库版本过滤。
 
 ## v0.5 — 语义检索
 

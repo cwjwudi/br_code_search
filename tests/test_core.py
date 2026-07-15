@@ -6,6 +6,7 @@ from pathlib import Path
 
 from br_code_search.core import (
     CodeSearchIndex,
+    parse_software_tasks,
     parse_st_units,
     parse_type_units,
     parse_var_units,
@@ -40,6 +41,13 @@ class ParserTests(unittest.TestCase):
         units = parse_type_units("TYPE\nDemoType : STRUCT\n Value : INT;\nEND_STRUCT;\nEND_TYPE\n")
         self.assertEqual("DemoType", units[0].symbol_name)
         self.assertEqual("data_type", units[0].symbol_type)
+
+    def test_software_task_parser(self) -> None:
+        text = """<Software><TaskClass Name=\"Cyclic#1\"><Task Name=\"Main\" Source=\"Control.Cyclic.prg\" CycleTimeUs=\"4000\" /></TaskClass></Software>"""
+        tasks = parse_software_tasks(text, "Cpu.sw")
+        self.assertEqual(1, len(tasks))
+        self.assertEqual("Cyclic#1", tasks[0]["task_class"])
+        self.assertEqual(4000, tasks[0]["cycle_time_us"])
 
     def test_cp1252_is_not_misclassified_as_gb18030(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -82,6 +90,10 @@ class IndexTests(unittest.TestCase):
         (module / "Types.typ").write_text(
             "TYPE\nDemoType : STRUCT\n Value : INT;\nEND_STRUCT;\nEND_TYPE\n", encoding="utf-8"
         )
+        (self.project / "Cpu.sw").write_text(
+            """<Software><TaskClass Name=\"Cyclic#1\"><Task Name=\"Main\" Source=\"Control.Cyclic.prg\" CycleTimeUs=\"4000\" /></TaskClass></Software>""",
+            encoding="utf-8",
+        )
         library = self.project / "Logical" / "Libraries" / "Vendor"
         library.mkdir(parents=True)
         (library / "Vendor.fun").write_text(
@@ -117,6 +129,16 @@ class IndexTests(unittest.TestCase):
         paths = {item["path"] for item in context["related_context"]}
         self.assertIn("Logical/Control/Init.st", paths)
         self.assertIn("Logical/Control/Variables.var", paths)
+        self.assertEqual("Main", context["tasks"][0]["task_name"])
+
+    def test_tasks_types_and_references(self) -> None:
+        tasks = self.index.get_task_configuration("ProjectA")
+        self.assertEqual(1, tasks["count"])
+        self.assertEqual(4000, tasks["tasks"][0]["cycle_time_us"])
+        definition = self.index.get_type_definition("DemoType")
+        self.assertEqual(1, definition["count"])
+        references = self.index.find_references("Ready")
+        self.assertGreaterEqual(references["count"], 2)
 
     def test_incremental_sync_and_similar_search(self) -> None:
         first = self.index.sync(self.source)

@@ -150,6 +150,41 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             {"project": {"type": "string", "minLength": 1}}, ["project"]
         ),
     },
+    {
+        "name": "br_get_task_configuration",
+        "description": "Return B&R .sw TaskClass/Task assignments, source programs and explicit cycle metadata for one project.",
+        "inputSchema": object_schema(
+            {
+                "project": {"type": "string", "minLength": 1},
+                "task_name": {"type": "string", "minLength": 1},
+                "source": {"type": "string", "minLength": 1},
+            },
+            ["project"],
+        ),
+    },
+    {
+        "name": "br_get_type_definition",
+        "description": "Return indexed B&R TYPE declarations with their source and project provenance.",
+        "inputSchema": object_schema(
+            {
+                "type_name": {"type": "string", "minLength": 1},
+                "project": {"type": "string", "minLength": 1},
+            },
+            ["type_name"],
+        ),
+    },
+    {
+        "name": "br_find_references",
+        "description": "Find whole-identifier references to a B&R symbol or variable and return line-level source context.",
+        "inputSchema": object_schema(
+            {
+                "name": {"type": "string", "minLength": 1},
+                "project": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+            },
+            ["name"],
+        ),
+    },
 ]
 
 
@@ -226,6 +261,17 @@ class McpServer:
                 arguments["document_id"], max_chars=arguments.get("max_chars", 30000)
             ),
             "br_get_project_overview": lambda: self.index.project_overview(arguments["project"]),
+            "br_get_task_configuration": lambda: self.index.get_task_configuration(
+                arguments["project"],
+                task_name=arguments.get("task_name"),
+                source=arguments.get("source"),
+            ),
+            "br_get_type_definition": lambda: self.index.get_type_definition(
+                arguments["type_name"], project=arguments.get("project")
+            ),
+            "br_find_references": lambda: self.index.find_references(
+                arguments["name"], project=arguments.get("project"), limit=arguments.get("limit", 100)
+            ),
         }
         call = calls.get(name)
         if call is None:

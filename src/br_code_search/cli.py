@@ -85,6 +85,20 @@ def build_parser() -> argparse.ArgumentParser:
     overview = subparsers.add_parser("overview", help="Show one project's indexed structure")
     overview.add_argument("project")
 
+    tasks = subparsers.add_parser("tasks", help="Show B&R TaskClass/Task assignments")
+    tasks.add_argument("project")
+    tasks.add_argument("--task-name")
+    tasks.add_argument("--source")
+
+    type_definition = subparsers.add_parser("type", help="Get a TYPE declaration")
+    type_definition.add_argument("type_name")
+    type_definition.add_argument("--project")
+
+    references = subparsers.add_parser("references", help="Find whole-identifier references")
+    references.add_argument("name")
+    references.add_argument("--project")
+    references.add_argument("--limit", type=int, default=100)
+
     annotate = subparsers.add_parser("annotate-project", help="Persist project quality metadata")
     annotate.add_argument("project")
     annotate.add_argument("--quality", choices=["gold", "normal", "deprecated"], default="normal")
@@ -146,6 +160,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "overview":
             result = index.project_overview(args.project)
+        elif args.command == "tasks":
+            result = index.get_task_configuration(
+                args.project, task_name=args.task_name, source=args.source
+            )
+        elif args.command == "type":
+            result = index.get_type_definition(args.type_name, project=args.project)
+        elif args.command == "references":
+            result = index.find_references(args.name, project=args.project, limit=args.limit)
         else:
             result = index.annotate_project(
                 args.project,

@@ -21,6 +21,13 @@ class McpServerTests(unittest.TestCase):
             (logical / "Cyclic.st").write_text(
                 "PROGRAM SearchMe\nValue := 42;\nEND_PROGRAM\n", encoding="utf-8"
             )
+            (logical / "Types.typ").write_text(
+                "TYPE\nDemoType : STRUCT\n Value : INT;\nEND_STRUCT;\nEND_TYPE\n", encoding="utf-8"
+            )
+            (source / "Cpu.sw").write_text(
+                "<Software><TaskClass Name=\"Cyclic#1\"><Task Name=\"Main\" Source=\"Logical.Cyclic.prg\" /></TaskClass></Software>",
+                encoding="utf-8",
+            )
             server = McpServer(CodeSearchIndex(root / "index.sqlite3"), str(root / "Source"))
 
             initialize = server.handle(
@@ -52,7 +59,7 @@ class McpServerTests(unittest.TestCase):
                     },
                 }
             )
-            self.assertEqual(1, searched["result"]["structuredContent"]["count"])
+            self.assertGreaterEqual(searched["result"]["structuredContent"]["count"], 1)
 
             similar = server.handle(
                 {
@@ -81,6 +88,36 @@ class McpServerTests(unittest.TestCase):
             )
             self.assertFalse(annotated["result"]["isError"])
             self.assertEqual("gold", annotated["result"]["structuredContent"]["quality"])
+
+            tasks = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_task_configuration", "arguments": {"project": "Sample"}},
+                }
+            )
+            self.assertEqual(1, tasks["result"]["structuredContent"]["count"])
+
+            type_result = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_type_definition", "arguments": {"type_name": "DemoType"}},
+                }
+            )
+            self.assertEqual(1, type_result["result"]["structuredContent"]["count"])
+
+            references = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 9,
+                    "method": "tools/call",
+                    "params": {"name": "br_find_references", "arguments": {"name": "Value"}},
+                }
+            )
+            self.assertGreaterEqual(references["result"]["structuredContent"]["count"], 1)
 
 
 if __name__ == "__main__":

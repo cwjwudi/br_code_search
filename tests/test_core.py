@@ -244,6 +244,16 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(1, only_b["count"])
         self.assertEqual(["B4.10"], only_b["results"][0]["target_ar_versions"])
 
+    def test_hybrid_search_and_embedding_cache(self) -> None:
+        first = self.index.search_hybrid("axis ready", backend="hashing", limit=3, include_source=False)
+        self.assertEqual("hybrid", first["mode"])
+        self.assertEqual("offline_hashing_fallback", first["backend_kind"])
+        self.assertGreater(first["embedding_documents_encoded"], 0)
+        second = self.index.search_hybrid("axis ready", backend="hashing", limit=3, include_source=False)
+        self.assertGreater(second["embedding_cache_hits"], 0)
+        self.assertEqual(0, second["embedding_documents_encoded"])
+        self.assertTrue(all("hybrid_score" in item for item in second["results"]))
+
     def test_project_annotations_filter_results(self) -> None:
         annotation = self.index.annotate_project(
             "ProjectA", quality="gold", verified=True, notes="现场验证通过"

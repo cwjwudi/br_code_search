@@ -11,7 +11,7 @@ $env:PYTHONPATH = "$PWD\src"
 python -m br_code_search.cli evaluate eval/retrieval_queries.json --top-k 5
 ```
 
-The evaluator supports `search`, `similar` and `find_symbol` cases. A relevant
+The evaluator supports `search`, `similar`, `find_symbol` and `hybrid` cases. A relevant
 label can match `path`, `project`, `symbol`, `symbol_type`, target metadata or
 their `*_glob` forms. Keep labels stable and update the dataset version when
 the intended retrieval target changes.

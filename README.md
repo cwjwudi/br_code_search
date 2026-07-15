@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.4.7`.
+Current release: `0.5.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -39,6 +39,7 @@ python -m br_code_search.cli references Ready --limit 20
 python -m br_code_search.cli annotate-project "2406长虹飞狮" --quality gold --verified --notes "现场验证通过"
 python -m br_code_search.cli search MpAxisBasic --quality gold --verified-only --origin user
 python -m br_code_search.cli evaluate eval/retrieval_queries.json --top-k 5
+python -m br_code_search.cli hybrid "fault restart timeout" --backend hashing --limit 5
 ```
 
 Start the MCP server:
@@ -82,6 +83,7 @@ Example MCP client configuration:
 - `br_annotate_project`: persist project quality and verification metadata outside the source repository
 - `br_search_code`: full-text and exact source search
 - `br_find_similar_code`: lightweight lexical/structural neighbor search
+- `br_search_hybrid`: combine optional local vectors with lexical/structural ranking
 - `br_find_symbol`: exact or prefix symbol lookup
 - `br_get_symbol`: retrieve one indexed source unit by document id
 - `br_get_program_context`: retrieve a source unit with bounded sibling context
@@ -114,8 +116,10 @@ or library `TYPE`/`FUNCTION_BLOCK` symbols.
 
 This version performs lexical search, incremental synchronization, tolerant structural parsing,
 basic `.sw` TaskClass/Task extraction, VAR declaration/type resolution and line-level identifier references. It
-supports AS/AR/CPU/technology-package filters and quality-aware ranking, but does not claim compiler-grade AST accuracy, semantic/vector search or complete
-cross-reference analysis. Cycle values are returned only when an explicit cycle/period
+supports AS/AR/CPU/technology-package filters, quality-aware ranking and an
+optional hybrid vector backend, but does not claim compiler-grade AST accuracy
+or complete cross-reference analysis. The default hashing vector backend is an
+offline baseline rather than trained semantic language understanding. Cycle values are returned only when an explicit cycle/period
 attribute exists in the source configuration. Parse fallbacks are exposed
 as ordinary file units so source remains searchable even when a dialect is not
 recognized.
@@ -124,9 +128,9 @@ For multi-target Automation Studio projects, target metadata is inferred from
 the nearest `Cpu.pkg`/`Config.pkg` and from `.sw` Task-to-program assignments.
 This is path and configuration metadata, not a compiler-grade build graph.
 
-The similarity tool is deliberately labeled `lexical_structural`: it uses
-identifier/control-token overlap with language and symbol-kind boosts. It is a
-stable intermediate step, not a replacement for future embedding search.
+The original similarity tool is deliberately labeled `lexical_structural`: it
+uses identifier/control-token overlap with language and symbol-kind boosts.
+Use `br_search_hybrid` when vector signals are desired.
 
 Project quality annotations are stored beside the index at
 `var/project_metadata.json`. Supported quality values are `gold`, `normal` and
@@ -138,3 +142,18 @@ Retrieval evaluation datasets use path/symbol labels rather than copying source
 code. Run the bundled baseline with `br_code_search.cli evaluate`; the same
 dataset can be passed to the MCP `br_evaluate_retrieval` tool. The report
 includes per-case first-hit rank, Hit@1/3/5/10 (where evaluated) and MRR.
+
+Hybrid retrieval defaults to the dependency-free `hashing` backend. It is a
+deterministic offline vector baseline with B&R control-vocabulary expansion,
+not a trained language model. For a real local embedding model, install the
+optional dependency and pass a local model name or path:
+
+```powershell
+python -m pip install -e ".[semantic]"
+python -m br_code_search.cli hybrid "fault restart timeout" `
+  --backend sentence_transformers `
+  --model C:\models\your-local-model
+```
+
+Vectors are cached in the index by document content hash and backend key, so
+unchanged documents are not re-encoded on later calls.

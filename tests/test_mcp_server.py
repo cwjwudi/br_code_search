@@ -72,6 +72,20 @@ class McpServerTests(unittest.TestCase):
             self.assertFalse(evaluated["result"]["isError"])
             self.assertEqual(1.0, evaluated["result"]["structuredContent"]["mrr"])
 
+            hybrid = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 32,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_search_hybrid",
+                        "arguments": {"query": "SearchMe", "backend": "hashing", "limit": 2, "include_source": False},
+                    },
+                }
+            )
+            self.assertFalse(hybrid["result"]["isError"])
+            self.assertEqual("hybrid", hybrid["result"]["structuredContent"]["mode"])
+
             searched = server.handle(
                 {
                     "jsonrpc": "2.0",

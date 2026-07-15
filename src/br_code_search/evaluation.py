@@ -10,7 +10,7 @@ from typing import Any
 from .core import CodeSearchIndex
 
 
-SUPPORTED_OPERATIONS = {"search", "similar", "find_symbol"}
+SUPPORTED_OPERATIONS = {"search", "similar", "find_symbol", "hybrid"}
 DEFAULT_CUTOFFS = (1, 3, 5, 10)
 
 
@@ -123,12 +123,14 @@ def _run_case(index: CodeSearchIndex, case: dict[str, Any], default_top_k: int) 
     filters = dict(case["filters"])
     filters.pop("limit", None)
     filters.pop("max_chars_per_result", None)
-    if case["operation"] in {"search", "similar"}:
+    if case["operation"] in {"search", "similar", "hybrid"}:
         filters["include_source"] = False
     if case["operation"] == "search":
         response = index.search(case["query"], limit=top_k, **filters)
     elif case["operation"] == "similar":
         response = index.search_similar(case["query"], limit=top_k, **filters)
+    elif case["operation"] == "hybrid":
+        response = index.search_hybrid(case["query"], limit=top_k, **filters)
     else:
         response = index.find_symbol(case["query"], limit=top_k, **filters)
     results = response.get("results", [])

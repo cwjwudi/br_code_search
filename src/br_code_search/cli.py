@@ -99,6 +99,30 @@ def build_parser() -> argparse.ArgumentParser:
     similar.add_argument("--limit", type=int, default=10)
     similar.add_argument("--no-source", action="store_true")
 
+    hybrid = subparsers.add_parser("hybrid", help="Hybrid lexical/structural/vector retrieval")
+    hybrid.add_argument("query")
+    hybrid.add_argument("--project")
+    hybrid.add_argument("--origin", choices=["all", "user", "library", "physical"], default="all")
+    hybrid.add_argument("--language")
+    hybrid.add_argument("--as-version")
+    hybrid.add_argument("--ar-version")
+    hybrid.add_argument("--cpu-model")
+    hybrid.add_argument("--library")
+    hybrid.add_argument("--library-version")
+    hybrid.add_argument("--quality", choices=["gold", "normal", "deprecated"])
+    hybrid.add_argument("--verified-only", action="store_true")
+    hybrid.add_argument("--include-deprecated", action="store_true")
+    hybrid.add_argument("--limit", type=int, default=10)
+    hybrid.add_argument("--no-source", action="store_true")
+    hybrid.add_argument("--aggregate-files", action="store_true")
+    hybrid.add_argument("--backend", choices=["hashing", "sentence_transformers", "auto"], default="hashing")
+    hybrid.add_argument("--model", help="Local SentenceTransformers model name/path")
+    hybrid.add_argument("--dimension", type=int, default=256)
+    hybrid.add_argument("--semantic-weight", type=float, default=0.5)
+    hybrid.add_argument("--lexical-weight", type=float, default=0.35)
+    hybrid.add_argument("--structural-weight", type=float, default=0.15)
+    hybrid.add_argument("--max-documents", type=int, default=50000)
+
     overview = subparsers.add_parser("overview", help="Show one project's indexed structure")
     overview.add_argument("project")
 
@@ -202,6 +226,31 @@ def main(argv: list[str] | None = None) -> int:
                 include_deprecated=args.include_deprecated,
                 limit=args.limit,
                 include_source=not args.no_source,
+            )
+        elif args.command == "hybrid":
+            result = index.search_hybrid(
+                args.query,
+                project=args.project,
+                origin=args.origin,
+                language=args.language,
+                as_version=args.as_version,
+                ar_version=args.ar_version,
+                cpu_model=args.cpu_model,
+                library=args.library,
+                library_version=args.library_version,
+                quality=args.quality,
+                verified_only=args.verified_only,
+                include_deprecated=args.include_deprecated,
+                limit=args.limit,
+                include_source=not args.no_source,
+                aggregate_files=args.aggregate_files,
+                backend=args.backend,
+                model=args.model,
+                dimension=args.dimension,
+                semantic_weight=args.semantic_weight,
+                lexical_weight=args.lexical_weight,
+                structural_weight=args.structural_weight,
+                max_documents=args.max_documents,
             )
         elif args.command == "overview":
             result = index.project_overview(args.project)

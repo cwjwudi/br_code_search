@@ -152,6 +152,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     content,
     tokenize='unicode61 remove_diacritics 2'
 );
+CREATE TABLE IF NOT EXISTS document_embeddings (
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    backend_key TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    dimension INTEGER NOT NULL,
+    vector_json TEXT NOT NULL,
+    indexed_at TEXT NOT NULL,
+    PRIMARY KEY(document_id, backend_key)
+);
+CREATE INDEX IF NOT EXISTS idx_document_embeddings_backend ON document_embeddings(backend_key);
 """
 
 
@@ -927,10 +937,10 @@ class CodeSearchIndex:
                 indexed_documents += documents
             self._refresh_document_target_metadata(connection, project_ids)
             meta = {
-                "schema_version": "7",
+                "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.7",
+                "tool_version": "0.5.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1062,10 +1072,10 @@ class CodeSearchIndex:
             if target_enrichment_dirty:
                 self._refresh_document_target_metadata(connection, project_ids)
             meta.update({
-                "schema_version": "7",
+                "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.7",
+                "tool_version": "0.5.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -1109,6 +1119,12 @@ class CodeSearchIndex:
                 """SELECT COUNT(*) FROM documents
                 WHERE target_cpu_models != '[]' OR target_ar_versions != '[]' OR target_configurations != '[]'"""
             ).fetchone()[0]
+            embedding_cache_rows = connection.execute(
+                "SELECT COUNT(*) FROM document_embeddings"
+            ).fetchone()[0]
+            embedding_backends = connection.execute(
+                "SELECT COUNT(DISTINCT backend_key) FROM document_embeddings"
+            ).fetchone()[0]
         return {
             "ok": True,
             "indexed": bool(meta.get("indexed_at")),
@@ -1123,6 +1139,8 @@ class CodeSearchIndex:
             "projects_by_quality": quality_counts,
             "verified_projects": verified_projects,
             "target_documents": target_documents,
+            "embedding_cache_rows": embedding_cache_rows,
+            "embedding_backends": embedding_backends,
         }
 
     @staticmethod
@@ -1356,6 +1374,12 @@ class CodeSearchIndex:
             "count": len(results),
             "results": results,
         }
+
+    def search_hybrid(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        """Run optional vector retrieval combined with exact/structural signals."""
+        from .semantic import hybrid_search
+
+        return hybrid_search(self, query, **kwargs)
 
     def search_similar(
         self,

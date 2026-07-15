@@ -4,11 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "br-code-search"
-version = "0.4.7"
+version = "0.5.0"
 description = "Local read-only B&R Automation Studio code search MCP server"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
+
+[project.optional-dependencies]
+semantic = ["sentence-transformers>=3.0"]
 
 [project.scripts]
 br-code-search = "br_code_search.cli:main"

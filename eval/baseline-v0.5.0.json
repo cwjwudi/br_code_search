@@ -1,0 +1,29 @@
+{
+  "release": "0.5.0",
+  "dataset": "retrieval_queries.json",
+  "dataset_version": 2,
+  "top_k": 5,
+  "embedding_backend": "hashing:256",
+  "embedding_kind": "offline_hashing_fallback",
+  "candidate_count": 31675,
+  "embedding_cache_rows": 31675,
+  "query_count": 9,
+  "hit_at_k": {
+    "1": {"hits": 8, "evaluated": 9, "rate": 0.888889},
+    "3": {"hits": 9, "evaluated": 9, "rate": 1.0},
+    "5": {"hits": 9, "evaluated": 9, "rate": 1.0}
+  },
+  "mrr": 0.944444,
+  "first_relevant_rank": {
+    "cam-sequence-exact-search": 1,
+    "opcua-search": 1,
+    "target-aware-actuator-search": 1,
+    "cam-sequence-similar": 1,
+    "cam-function-hybrid": 1,
+    "fb-home-master-symbol": 2,
+    "mp-axis-basic-symbol": 1,
+    "cam-function-symbol": 1,
+    "opcua-function-block-symbol": 1
+  },
+  "note": "Baseline generated from the supplied three-project reference corpus; hashing is an offline fallback, not a trained language model."
+}

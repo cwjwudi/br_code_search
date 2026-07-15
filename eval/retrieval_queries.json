@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "B&R reference retrieval smoke set",
   "description": "Path/symbol-only labels for the checked-in reference corpus; no source code is copied into this dataset.",
   "queries": [
@@ -47,6 +47,20 @@
       "id": "cam-sequence-similar",
       "operation": "similar",
       "query": "cam sequence",
+      "relevant": [
+        {
+          "path": "Logical/T2010_Pump_Lift/FillerCtrl/LocalFunctions.fun",
+          "symbol": "fcPreFlowCamSeq"
+        }
+      ]
+    },
+    {
+      "id": "cam-function-hybrid",
+      "operation": "hybrid",
+      "query": "fcPreFlowCamSeq",
+      "filters": {
+        "backend": "hashing"
+      },
       "relevant": [
         {
           "path": "Logical/T2010_Pump_Lift/FillerCtrl/LocalFunctions.fun",

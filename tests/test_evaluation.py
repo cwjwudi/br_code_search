@@ -46,6 +46,13 @@ class EvaluationTests(unittest.TestCase):
                                 "query": "DemoType",
                                 "relevant": [{"path": "Logical/Types.typ", "symbol": "DemoType"}],
                             },
+                            {
+                                "id": "hybrid-program",
+                                "operation": "hybrid",
+                                "query": "ready program",
+                                "filters": {"backend": "hashing"},
+                                "relevant": [{"path": "Logical/Main.st", "symbol": "DemoProgram"}],
+                            },
                         ],
                     }
                 ),
@@ -53,8 +60,8 @@ class EvaluationTests(unittest.TestCase):
             )
             result = evaluate_dataset(index, dataset, top_k=3)
             self.assertTrue(result["ok"])
-            self.assertEqual(2, result["query_count"])
-            self.assertEqual(2, result["hit_at_k"]["1"]["hits"])
+            self.assertEqual(3, result["query_count"])
+            self.assertEqual(3, result["hit_at_k"]["1"]["hits"])
             self.assertEqual(1.0, result["mrr"])
             self.assertTrue(all(case["hit"] for case in result["cases"]))
 

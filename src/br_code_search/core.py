@@ -1344,7 +1344,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.11.0",
+                "tool_version": "0.12.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1480,7 +1480,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.11.0",
+                "tool_version": "0.12.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -1547,6 +1547,23 @@ class CodeSearchIndex:
             "embedding_cache_rows": embedding_cache_rows,
             "embedding_backends": embedding_backends,
         }
+
+    def source_provenance(self, root: str | Path | None = None) -> dict[str, Any]:
+        """Return read-only Git provenance for the indexed source root."""
+        if root is None:
+            if not self.database_path.exists():
+                return {"ok": False, "available": False, "error": "Index database does not exist."}
+            with closing(self.connect()) as connection, connection:
+                self._initialize(connection)
+                row = connection.execute("SELECT value FROM meta WHERE key='source_root'").fetchone()
+            root = row[0] if row else None
+        if not root:
+            return {"ok": False, "available": False, "error": "No source root is recorded; index the codebase first."}
+        from .provenance import inspect_git
+
+        result = inspect_git(root)
+        result["indexed_source_root"] = str(root)
+        return result
 
     @staticmethod
     def _row_payload(row: sqlite3.Row, *, include_source: bool, max_chars: int = 6000) -> dict[str, Any]:
@@ -2521,6 +2538,93 @@ class CodeSearchIndex:
             if len(references) >= max(1, min(int(limit), 500)):
                 break
         return {"ok": True, "name": name, "count": len(references), "references": references}
+
+    def get_symbol_impact(
+        self,
+        name: str,
+        *,
+        project: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Summarize cross-file/project impact from indexed references and target metadata."""
+        name = name.strip()
+        if not name:
+            raise ValueError("name must not be empty")
+        references_result = self.find_references(name, project=project, limit=limit)
+        references = references_result["references"]
+        definitions = self.find_symbol(name, project=project, limit=20)["results"]
+        access_counts: dict[str, int] = {}
+        relation_counts: dict[str, int] = {}
+        affected_documents: dict[tuple[str, str], dict[str, Any]] = {}
+        affected_projects: set[str] = set()
+        targets: dict[str, set[str]] = {"cpu_models": set(), "ar_versions": set(), "configurations": set()}
+        callers: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+        for reference in references:
+            access = str(reference.get("access") or "unknown")
+            relation = str(reference.get("relation") or "use")
+            access_counts[access] = access_counts.get(access, 0) + 1
+            relation_counts[relation] = relation_counts.get(relation, 0) + 1
+            project_name = str(reference["project"])
+            path = str(reference["path"])
+            affected_projects.add(project_name)
+            affected_documents.setdefault(
+                (project_name, path),
+                {
+                    "project": project_name,
+                    "path": path,
+                    "document_id": reference["document_id"],
+                    "symbol": reference.get("symbol"),
+                    "symbol_type": reference.get("symbol_type"),
+                    "origin": reference.get("origin"),
+                    "reference_count": 0,
+                    "accesses": {},
+                    "target_cpu_models": reference.get("target_cpu_models", []),
+                    "target_ar_versions": reference.get("target_ar_versions", []),
+                    "target_configurations": reference.get("target_configurations", []),
+                },
+            )
+            document = affected_documents[(project_name, path)]
+            document["reference_count"] += 1
+            document["accesses"][access] = document["accesses"].get(access, 0) + 1
+            targets["cpu_models"].update(str(value) for value in reference.get("target_cpu_models", []))
+            targets["ar_versions"].update(str(value) for value in reference.get("target_ar_versions", []))
+            targets["configurations"].update(str(value) for value in reference.get("target_configurations", []))
+            if relation != "declaration" and access == "call":
+                caller_key = (project_name, path, reference.get("symbol"))
+                callers.setdefault(
+                    caller_key,
+                    {
+                        "project": project_name,
+                        "path": path,
+                        "symbol": reference.get("symbol"),
+                        "symbol_type": reference.get("symbol_type"),
+                        "document_id": reference.get("document_id"),
+                    },
+                )
+        write_count = access_counts.get("write", 0)
+        call_count = access_counts.get("call", 0)
+        project_count = len(affected_projects)
+        document_count = len(affected_documents)
+        impact_score = round(min(1.0, 0.1 * project_count + 0.03 * document_count + 0.02 * write_count + 0.04 * call_count), 6)
+        risk = "high" if write_count >= 5 or project_count >= 3 else "medium" if write_count or call_count else "low"
+        return {
+            "ok": True,
+            "name": name,
+            "project_filter": project,
+            "definitions": definitions,
+            "reference_count": len(references),
+            "affected_project_count": project_count,
+            "affected_document_count": document_count,
+            "affected_projects": sorted(affected_projects),
+            "affected_documents": list(affected_documents.values())[: max(1, min(int(limit), 500))],
+            "callers": list(callers.values())[: max(1, min(int(limit), 500))],
+            "access_counts": access_counts,
+            "relation_counts": relation_counts,
+            "targets": {key: sorted(values) for key, values in targets.items()},
+            "impact_score": impact_score,
+            "risk": risk,
+            "note": "Impact is an index-level reference summary, not a compiler-grade data-flow or safety analysis.",
+        }
 
     def get_library_usage(
         self,

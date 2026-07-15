@@ -355,6 +355,13 @@ class IndexTests(unittest.TestCase):
         self.index.rebuild(self.source)
         self.assertEqual(2, self.index.project_overview("ProjectA")["validation"]["record_count"])
 
+    def test_symbol_impact_summarizes_accesses_and_callers(self) -> None:
+        impact = self.index.get_symbol_impact("Axis", project="ProjectA")
+        self.assertGreaterEqual(impact["reference_count"], 3)
+        self.assertIn("call", impact["access_counts"])
+        self.assertIn("ProjectA", impact["affected_projects"])
+        self.assertTrue(impact["affected_documents"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "inputSchema": object_schema({}),
     },
     {
+        "name": "br_get_source_provenance",
+        "description": "Return read-only Git revision, branch and dirty-state provenance for the indexed source root.",
+        "inputSchema": object_schema(
+            {"root": {"type": "string", "minLength": 1, "description": "Optional source root override."}}
+        ),
+    },
+    {
         "name": "br_get_library_usage",
         "description": "Find projects and source units that declare or use a B&R technology library.",
         "inputSchema": object_schema(
@@ -439,6 +446,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "br_get_symbol_impact",
+        "description": "Summarize indexed cross-file/project references, reads/writes/calls and target coverage for a B&R symbol.",
+        "inputSchema": object_schema(
+            {
+                "name": {"type": "string", "minLength": 1},
+                "project": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+            },
+            ["name"],
+        ),
+    },
+    {
         "name": "br_compare_implementations",
         "description": "Compare two indexed source units with provenance, validation metadata and a bounded unified diff.",
         "inputSchema": object_schema(
@@ -477,6 +496,7 @@ class McpServer:
         calls: dict[str, Callable[[], dict[str, Any]]] = {
             "br_index_codebase": index_codebase,
             "br_get_index_status": self.index.status,
+            "br_get_source_provenance": lambda: self.index.source_provenance(arguments.get("root")),
             "br_get_library_usage": lambda: self.index.get_library_usage(
                 arguments["library"], project=arguments.get("project"), limit=arguments.get("limit", 100)
             ),
@@ -688,6 +708,9 @@ class McpServer:
                 arguments["type_name"], project=arguments.get("project")
             ),
             "br_find_references": lambda: self.index.find_references(
+                arguments["name"], project=arguments.get("project"), limit=arguments.get("limit", 100)
+            ),
+            "br_get_symbol_impact": lambda: self.index.get_symbol_impact(
                 arguments["name"], project=arguments.get("project"), limit=arguments.get("limit", 100)
             ),
             "br_compare_implementations": lambda: self.index.compare_implementations(

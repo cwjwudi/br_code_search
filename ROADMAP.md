@@ -147,7 +147,14 @@
 - 支持项目、来源、语言、质量、已验证和废弃过滤，并返回可解释的 Qdrant 分数；
 - 保持 Qdrant 可选依赖和 SQLite 离线 fallback，未改变 PLC 工具链权限。
 
-## v0.12+ — 外部索引与工具链闭环
+## v0.12.0 — 当前版本：Git provenance 与符号影响摘要
+
+- 新增 `br_get_source_provenance`/CLI `source-provenance`，明确报告源代码是否处于 Git 工作树、revision、分支和 dirty 状态；
+- 新增 `br_get_symbol_impact`/CLI `impact`，聚合 B&R 符号的跨文件/项目引用、读写/调用方向、调用者和 CPU/AR 目标覆盖；
+- 对没有 Git 元数据的当前 `code_base` 显式标记为 path/time provenance，不伪造 revision；
+- 影响分析保持索引级只读摘要，不冒充编译器数据流或 Safety 分析。
+
+## v0.13+ — 外部索引与工具链闭环
 
 - 接收外部构建结果和人工验证结果；
 - 以成功构建、现场验证和版本兼容性参与排序；

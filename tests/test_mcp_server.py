@@ -162,6 +162,28 @@ class McpServerTests(unittest.TestCase):
             self.assertFalse(toolchain_status["result"]["isError"])
             self.assertTrue(toolchain_status["result"]["structuredContent"]["read_only"])
 
+            provenance = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 46,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_source_provenance", "arguments": {"root": str(source)}},
+                }
+            )
+            self.assertFalse(provenance["result"]["isError"])
+            self.assertFalse(provenance["result"]["structuredContent"]["available"])
+
+            impact = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 47,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_symbol_impact", "arguments": {"name": "SearchMe"}},
+                }
+            )
+            self.assertFalse(impact["result"]["isError"])
+            self.assertIn("access_counts", impact["result"]["structuredContent"])
+
             dataset = root / "queries.json"
             dataset.write_text(
                 '{"version": 1, "queries": [{"id": "search-me", "operation": "search", '

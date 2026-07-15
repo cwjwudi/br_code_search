@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Show index status")
 
+    source_provenance = subparsers.add_parser("source-provenance", help="Inspect indexed source Git provenance")
+    source_provenance.add_argument("--root", help="Optional source root override")
+
     embedding_status = subparsers.add_parser("embedding-status", help="Check local embedding backend availability")
     embedding_status.add_argument("--backend", choices=["hashing", "sentence_transformers", "auto"], default="hashing")
     embedding_status.add_argument("--model")
@@ -211,6 +214,11 @@ def build_parser() -> argparse.ArgumentParser:
     references.add_argument("--project")
     references.add_argument("--limit", type=int, default=100)
 
+    impact = subparsers.add_parser("impact", help="Summarize indexed symbol impact")
+    impact.add_argument("name")
+    impact.add_argument("--project")
+    impact.add_argument("--limit", type=int, default=100)
+
     compare = subparsers.add_parser("compare", help="Compare two indexed source units")
     compare.add_argument("left_document_id", type=int)
     compare.add_argument("right_document_id", type=int)
@@ -288,6 +296,8 @@ def main(argv: list[str] | None = None) -> int:
             result = index.sync(args.source)
         elif args.command == "status":
             result = index.status()
+        elif args.command == "source-provenance":
+            result = index.source_provenance(args.root)
         elif args.command == "embedding-status":
             result = index.embedding_status(args.backend, model=args.model, dimension=args.dimension)
         elif args.command == "qdrant-status":
@@ -447,6 +457,8 @@ def main(argv: list[str] | None = None) -> int:
             result = index.get_type_definition(args.type_name, project=args.project)
         elif args.command == "references":
             result = index.find_references(args.name, project=args.project, limit=args.limit)
+        elif args.command == "impact":
+            result = index.get_symbol_impact(args.name, project=args.project, limit=args.limit)
         elif args.command == "compare":
             result = index.compare_implementations(
                 args.left_document_id, args.right_document_id, max_chars=args.max_chars

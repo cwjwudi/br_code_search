@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.11.0`.
+Current release: `0.12.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -30,6 +30,7 @@ $env:PYTHONPATH = "$PWD\src"
 python -m br_code_search.cli index --source C:\Users\BR\code_base
 python -m br_code_search.cli sync --source C:\Users\BR\code_base
 python -m br_code_search.cli status
+python -m br_code_search.cli source-provenance
 python -m br_code_search.cli embedding-status --backend hashing
 python -m br_code_search.cli qdrant-status
 python -m br_code_search.cli qdrant-export --path var/qdrant --collection br_code_search --max-documents 50000
@@ -51,6 +52,7 @@ python -m br_code_search.cli search fbMpAbMasterCalc --aggregate-files --limit 5
 python -m br_code_search.cli tasks "2406长虹飞狮"
 python -m br_code_search.cli type MC_ACP_ENCOD_REF
 python -m br_code_search.cli references Ready --limit 20
+python -m br_code_search.cli impact Ready --limit 50
 python -m br_code_search.cli annotate-project "2406长虹飞狮" --quality gold --verified --notes "现场验证通过"
 python -m br_code_search.cli search MpAxisBasic --quality gold --verified-only --origin user
 python -m br_code_search.cli evaluate eval/retrieval_queries.json --top-k 5
@@ -95,6 +97,7 @@ Example MCP client configuration:
 
 - `br_index_codebase`: synchronize or rebuild the local index from the configured source root
 - `br_get_index_status`: return index statistics and configured paths
+- `br_get_source_provenance`: inspect read-only Git revision/branch/dirty state for the indexed source root
 - `br_get_embedding_status`: check optional local embedding runtime availability
 - `br_get_qdrant_status`: check optional Qdrant client availability
 - `br_export_qdrant`: export cached vectors and B&R metadata to local or remote Qdrant
@@ -120,6 +123,7 @@ Example MCP client configuration:
 - `br_get_task_configuration`: retrieve `.sw` TaskClass/Task assignments and explicit cycle attributes
 - `br_get_type_definition`: retrieve indexed `TYPE` declarations
 - `br_find_references`: return whole-identifier, line-level references with declaration/use and read/write/call/member access classification
+- `br_get_symbol_impact`: summarize affected documents/projects, access directions, callers and target coverage
 - `br_compare_implementations`: compare two indexed units with provenance and a bounded unified diff
 
 `br_search_code`, `br_find_similar_code` and `br_find_symbol` accept optional
@@ -141,6 +145,12 @@ variable and type files from the same module directory, and any matching `.sw`
 Task assignment, within a caller-defined character budget. It also returns
 declarations extracted from VAR blocks and type-reference matches against local
 or library `TYPE`/`FUNCTION_BLOCK` symbols.
+
+`br_get_source_provenance` reports a Git revision when the source root is a
+checkout. A plain directory such as the current three-project corpus is
+explicitly reported as path/time based rather than being treated as versioned.
+`br_get_symbol_impact` is an index-level reference summary; it is not a
+compiler-grade data-flow or safety analysis.
 
 ## Current limits
 

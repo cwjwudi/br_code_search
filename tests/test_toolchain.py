@@ -65,13 +65,18 @@ class ToolchainAdapterTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
+                        "schema_version": 1,
+                        "event_id": "evt-1",
                         "ok": True,
                         "tool": "plc_build_project",
                         "target": "arsim",
+                        "config": "Config1",
                         "summary": "Build: 0 error(s), 2 warning(s)",
                         "data": {
                             "ok": True,
                             "warnings": ["W1: example"],
+                            "logs": ["var/build.log"],
+                            "next_actions": ["probe target"],
                             "package_path": "Binaries/Config1/RUCPackage.zip",
                             "as_version": "6.5.0",
                             "ar_version": "6.5.1",
@@ -84,5 +89,11 @@ class ToolchainAdapterTests(unittest.TestCase):
             imported = index.import_toolchain_report(report_path, project="Sample")
             self.assertEqual("passed", imported["record"]["status"])
             self.assertEqual("br-plc-toolchain", imported["record"]["source"])
+            self.assertEqual("evt-1", imported["record"]["report_id"])
+            self.assertEqual(["var/build.log"], imported["record"]["log_paths"])
             self.assertEqual(1, index.get_compile_history("Sample")["count"])
             self.assertEqual("X20CP3687X", index.get_compile_history("Sample")["latest"]["cpu_model"])
+            self.assertEqual(1, index.get_compile_history("Sample", target="arsim", tool="plc_build_project")["count"])
+            summary = index.get_build_diagnostic_summary()
+            self.assertEqual(1, summary["record_count"])
+            self.assertEqual(1, summary["warning_counts"][0]["count"])

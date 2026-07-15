@@ -217,6 +217,14 @@ def build_parser() -> argparse.ArgumentParser:
     validation.add_argument("--notes", default="")
     validation.add_argument("--error", dest="errors", action="append", default=[])
     validation.add_argument("--warning", dest="warnings", action="append", default=[])
+    validation.add_argument("--tool")
+    validation.add_argument("--target")
+    validation.add_argument("--config")
+    validation.add_argument("--report-path")
+    validation.add_argument("--report-schema-version")
+    validation.add_argument("--report-id")
+    validation.add_argument("--log-path", dest="log_paths", action="append", default=[])
+    validation.add_argument("--next-action", dest="next_actions", action="append", default=[])
 
     compile_history = subparsers.add_parser("compile-history", help="Show recorded build history for a project")
     compile_history.add_argument("project")
@@ -224,12 +232,20 @@ def build_parser() -> argparse.ArgumentParser:
     compile_history.add_argument("--as-version")
     compile_history.add_argument("--ar-version")
     compile_history.add_argument("--cpu-model")
+    compile_history.add_argument("--target")
+    compile_history.add_argument("--tool")
     compile_history.add_argument("--limit", type=int, default=50)
 
     build_errors = subparsers.add_parser("search-build-errors", help="Search recorded build errors and warnings")
     build_errors.add_argument("query")
     build_errors.add_argument("--project")
     build_errors.add_argument("--limit", type=int, default=100)
+
+    diagnostic_summary = subparsers.add_parser("build-diagnostic-summary", help="Aggregate imported build diagnostics")
+    diagnostic_summary.add_argument("--project")
+    diagnostic_summary.add_argument("--status", choices=["passed", "failed", "unknown"])
+    diagnostic_summary.add_argument("--query")
+    diagnostic_summary.add_argument("--limit", type=int, default=20)
 
     evaluate = subparsers.add_parser("evaluate", help="Evaluate retrieval quality against a versioned JSON dataset")
     evaluate.add_argument(
@@ -411,6 +427,14 @@ def main(argv: list[str] | None = None) -> int:
                 notes=args.notes,
                 errors=args.errors,
                 warnings=args.warnings,
+                tool=args.tool,
+                target=args.target,
+                config=args.config,
+                report_path=args.report_path,
+                report_schema_version=args.report_schema_version,
+                report_id=args.report_id,
+                log_paths=args.log_paths,
+                next_actions=args.next_actions,
             )
         elif args.command == "compile-history":
             result = index.get_compile_history(
@@ -419,10 +443,19 @@ def main(argv: list[str] | None = None) -> int:
                 as_version=args.as_version,
                 ar_version=args.ar_version,
                 cpu_model=args.cpu_model,
+                target=args.target,
+                tool=args.tool,
                 limit=args.limit,
             )
         elif args.command == "search-build-errors":
             result = index.search_build_errors(args.query, project=args.project, limit=args.limit)
+        elif args.command == "build-diagnostic-summary":
+            result = index.get_build_diagnostic_summary(
+                project=args.project,
+                status=args.status,
+                query=args.query,
+                limit=args.limit,
+            )
         else:
             result = index.annotate_project(
                 args.project,

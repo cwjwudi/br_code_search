@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.9.0`.
+Current release: `0.10.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -35,6 +35,7 @@ python -m br_code_search.cli qdrant-status
 python -m br_code_search.cli qdrant-export --path var/qdrant --collection br_code_search --max-documents 50000
 python -m br_code_search.cli toolchain-status
 python -m br_code_search.cli import-toolchain-report C:\path\to\build-report.json --project ProjectName
+python -m br_code_search.cli build-diagnostic-summary
 python -m br_code_search.cli record-validation ProjectName --kind build --status passed --source "Automation Studio"
 python -m br_code_search.cli compile-history ProjectName
 python -m br_code_search.cli search-build-errors "E123"
@@ -101,6 +102,7 @@ Example MCP client configuration:
 - `br_record_project_validation`: record external build/field/version feedback outside the source repository
 - `br_get_compile_history`: return recorded build results and diagnostics for a project
 - `br_search_build_errors`: search recorded build errors/warnings across projects
+- `br_get_build_diagnostic_summary`: aggregate repeated build errors, warnings and statuses across projects
 - `br_evaluate_retrieval`: run a versioned JSON query set and report Hit@K/MRR
 - `br_annotate_project`: persist project quality and verification metadata outside the source repository
 - `br_search_code`: full-text and exact source search
@@ -160,6 +162,11 @@ checks the expected `br_device_autodev` documentation/configuration layout, whil
 registered `br-plc-toolchain` MCP. It never launches Automation Studio,
 PVITransfer, PowerShell, or PLC writes; build/download permissions remain in the
 separate toolchain service.
+
+Imported records retain compact report provenance (`schema_version`, event or
+operation id, target/config, log paths and next actions). Use
+`br_get_build_diagnostic_summary` or CLI `build-diagnostic-summary` to see
+repeated diagnostics without returning full PLC logs.
 
 For multi-target Automation Studio projects, target metadata is inferred from
 the nearest `Cpu.pkg`/`Config.pkg` and from `.sw` Task-to-program assignments.

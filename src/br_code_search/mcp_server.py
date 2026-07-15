@@ -220,6 +220,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "notes": {"type": "string", "default": ""},
                 "errors": {"type": "array", "items": {"type": "string"}, "default": []},
                 "warnings": {"type": "array", "items": {"type": "string"}, "default": []},
+                "tool": {"type": "string", "minLength": 1},
+                "target": {"type": "string", "minLength": 1},
+                "config": {"type": "string", "minLength": 1},
+                "report_path": {"type": "string", "minLength": 1},
+                "report_schema_version": {"type": "string", "minLength": 1},
+                "report_id": {"type": "string", "minLength": 1},
+                "log_paths": {"type": "array", "items": {"type": "string"}, "default": []},
+                "next_actions": {"type": "array", "items": {"type": "string"}, "default": []},
             },
             ["project", "kind", "status"],
         ),
@@ -234,6 +242,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "as_version": {"type": "string", "minLength": 1},
                 "ar_version": {"type": "string", "minLength": 1},
                 "cpu_model": {"type": "string", "minLength": 1},
+                "target": {"type": "string", "minLength": 1},
+                "tool": {"type": "string", "minLength": 1},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
             },
             ["project"],
@@ -249,6 +259,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
             },
             ["query"],
+        ),
+    },
+    {
+        "name": "br_get_build_diagnostic_summary",
+        "description": "Aggregate imported B&R build statuses, repeated errors, warnings and recent report metadata across projects.",
+        "inputSchema": object_schema(
+            {
+                "project": {"type": "string", "minLength": 1},
+                "status": {"type": "string", "enum": ["passed", "failed", "unknown"]},
+                "query": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+            }
         ),
     },
     {
@@ -485,6 +507,14 @@ class McpServer:
                 notes=arguments.get("notes", ""),
                 errors=arguments.get("errors", []),
                 warnings=arguments.get("warnings", []),
+                tool=arguments.get("tool"),
+                target=arguments.get("target"),
+                config=arguments.get("config"),
+                report_path=arguments.get("report_path"),
+                report_schema_version=arguments.get("report_schema_version"),
+                report_id=arguments.get("report_id"),
+                log_paths=arguments.get("log_paths", []),
+                next_actions=arguments.get("next_actions", []),
             ),
             "br_get_compile_history": lambda: self.index.get_compile_history(
                 arguments["project"],
@@ -492,10 +522,18 @@ class McpServer:
                 as_version=arguments.get("as_version"),
                 ar_version=arguments.get("ar_version"),
                 cpu_model=arguments.get("cpu_model"),
+                target=arguments.get("target"),
+                tool=arguments.get("tool"),
                 limit=arguments.get("limit", 50),
             ),
             "br_search_build_errors": lambda: self.index.search_build_errors(
                 arguments["query"], project=arguments.get("project"), limit=arguments.get("limit", 100)
+            ),
+            "br_get_build_diagnostic_summary": lambda: self.index.get_build_diagnostic_summary(
+                project=arguments.get("project"),
+                status=arguments.get("status"),
+                query=arguments.get("query"),
+                limit=arguments.get("limit", 20),
             ),
             "br_evaluate_retrieval": lambda: evaluate_dataset(
                 self.index,

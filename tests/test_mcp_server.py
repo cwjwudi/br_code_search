@@ -247,6 +247,20 @@ class McpServerTests(unittest.TestCase):
             self.assertFalse(imported["result"]["isError"])
             self.assertEqual("passed", imported["result"]["structuredContent"]["record"]["status"])
 
+            diagnostic_summary = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 43,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_get_build_diagnostic_summary",
+                        "arguments": {"project": "Sample"},
+                    },
+                }
+            )
+            self.assertFalse(diagnostic_summary["result"]["isError"])
+            self.assertEqual(2, diagnostic_summary["result"]["structuredContent"]["record_count"])
+
             history = server.handle(
                 {
                     "jsonrpc": "2.0",

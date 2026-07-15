@@ -183,8 +183,23 @@ def normalize_report(
     cpu_model = _first_string(report, {"cpu_model", "cputype", "cpu_type", "order_number", "ordernumber"})
     target = _first_string(report, {"target", "target_name"})
     tool = _first_string(report, {"tool", "command"}) or "br-plc-toolchain"
+    config = _first_string(report, {"config", "configuration", "configuration_name"})
+    report_schema_version = _first_string(report, {"schema_version", "report_schema_version"})
+    report_id = _first_string(report, {"event_id", "operation_id", "report_id"})
+    log_paths = _collect_strings(report, {"logs", "log_paths", "log_path"}, limit=10)
+    next_actions = _collect_strings(report, {"next_actions", "next_action"}, limit=10)
     summary = _first_string(report, {"summary", "message", "next_action"})
-    notes_parts = [part for part in (summary, f"target={target}" if target else None, f"tool={tool}") if part]
+    notes_parts = [
+        part
+        for part in (
+            summary,
+            f"target={target}" if target else None,
+            f"config={config}" if config else None,
+            f"tool={tool}",
+            f"event={report_id}" if report_id else None,
+        )
+        if part
+    ]
     if report_path:
         notes_parts.append(f"report={report_path}")
     return {
@@ -202,6 +217,11 @@ def normalize_report(
         "report_path": report_path,
         "tool": tool,
         "target": target,
+        "config": config,
+        "report_schema_version": report_schema_version,
+        "report_id": report_id,
+        "log_paths": log_paths,
+        "next_actions": next_actions,
     }
 
 
@@ -235,6 +255,14 @@ def import_report(
         notes=normalized.get("notes", ""),
         errors=normalized.get("errors", []),
         warnings=normalized.get("warnings", []),
+        tool=normalized.get("tool"),
+        target=normalized.get("target"),
+        config=normalized.get("config"),
+        report_path=normalized.get("report_path"),
+        report_schema_version=normalized.get("report_schema_version"),
+        report_id=normalized.get("report_id"),
+        log_paths=normalized.get("log_paths", []),
+        next_actions=normalized.get("next_actions", []),
     )
     return {
         "ok": True,

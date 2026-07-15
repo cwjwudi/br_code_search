@@ -218,6 +218,14 @@ def _validation_records(value: Any) -> list[dict[str, Any]]:
             "notes": str(item.get("notes", ""))[:2000],
             "errors": _string_list(item.get("errors")),
             "warnings": _string_list(item.get("warnings")),
+            "tool": str(item["tool"])[:200] if item.get("tool") else None,
+            "target": str(item["target"])[:200] if item.get("target") else None,
+            "config": str(item["config"])[:200] if item.get("config") else None,
+            "report_path": str(item["report_path"])[:500] if item.get("report_path") else None,
+            "report_schema_version": str(item["report_schema_version"])[:50] if item.get("report_schema_version") else None,
+            "report_id": str(item["report_id"])[:200] if item.get("report_id") else None,
+            "log_paths": _string_list(item.get("log_paths"), limit=10, max_chars=500),
+            "next_actions": _string_list(item.get("next_actions"), limit=10, max_chars=1000),
         }
         records.append(record)
     return records
@@ -890,6 +898,14 @@ class CodeSearchIndex:
         notes: str = "",
         errors: list[str] | None = None,
         warnings: list[str] | None = None,
+        tool: str | None = None,
+        target: str | None = None,
+        config: str | None = None,
+        report_path: str | None = None,
+        report_schema_version: str | None = None,
+        report_id: str | None = None,
+        log_paths: list[str] | None = None,
+        next_actions: list[str] | None = None,
     ) -> dict[str, Any]:
         """Record external build, field verification or compatibility feedback."""
         normalized_kind = kind.strip().casefold()
@@ -923,6 +939,14 @@ class CodeSearchIndex:
                 "notes": notes,
                 "errors": errors or [],
                 "warnings": warnings or [],
+                "tool": tool,
+                "target": target,
+                "config": config,
+                "report_path": report_path,
+                "report_schema_version": report_schema_version,
+                "report_id": report_id,
+                "log_paths": log_paths or [],
+                "next_actions": next_actions or [],
             }]
         )[0]
         records.append(record)
@@ -962,6 +986,8 @@ class CodeSearchIndex:
         as_version: str | None = None,
         ar_version: str | None = None,
         cpu_model: str | None = None,
+        target: str | None = None,
+        tool: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         """Return external build records for one project without touching its source."""
@@ -986,6 +1012,8 @@ class CodeSearchIndex:
                 or (as_version and record.get("as_version") != as_version)
                 or (ar_version and record.get("ar_version") != ar_version)
                 or (cpu_model and record.get("cpu_model") != cpu_model)
+                or (target and str(record.get("target") or "").casefold() != target.casefold())
+                or (tool and str(record.get("tool") or "").casefold() != tool.casefold())
             )
         records = [record for record in records if matches(record)][-max(1, min(int(limit), 100)) :]
         return {
@@ -996,6 +1024,8 @@ class CodeSearchIndex:
                 "as_version": as_version,
                 "ar_version": ar_version,
                 "cpu_model": cpu_model,
+                "target": target,
+                "tool": tool,
             },
             "count": len(records),
             "records": records,
@@ -1031,7 +1061,16 @@ class CodeSearchIndex:
                 if record["kind"] != "build":
                     continue
                 searchable = " ".join(
-                    [record.get("source") or "", record.get("artifact") or "", record.get("notes") or ""]
+                    [
+                        record.get("source") or "",
+                        record.get("artifact") or "",
+                        record.get("notes") or "",
+                        record.get("tool") or "",
+                        record.get("target") or "",
+                        record.get("config") or "",
+                        record.get("report_id") or "",
+                    ]
+                    + record.get("log_paths", [])
                     + record.get("errors", [])
                     + record.get("warnings", [])
                 ).casefold()
@@ -1048,6 +1087,82 @@ class CodeSearchIndex:
             "project_filter": project,
             "count": len(matches),
             "matches": matches,
+        }
+
+    def get_build_diagnostic_summary(
+        self,
+        *,
+        project: str | None = None,
+        status: str | None = None,
+        query: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Aggregate recorded build diagnostics across projects without reading source."""
+        self._ensure_index()
+        normalized_status = status.strip().casefold() if status else None
+        if normalized_status and normalized_status not in VALIDATION_STATUSES:
+            raise ValueError("status must be one of: passed, failed, unknown")
+        normalized_query = query.strip().casefold() if query else None
+        project_clause = " WHERE p.name=? COLLATE NOCASE" if project else ""
+        params: list[Any] = [project] if project else []
+        with closing(self.connect()) as connection, connection:
+            rows = connection.execute(
+                "SELECT p.name, p.metadata_json FROM projects p" + project_clause + " ORDER BY p.name",
+                params,
+            ).fetchall()
+        records: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            for record in _validation_records(metadata.get("validation_records", [])):
+                if record["kind"] != "build" or (normalized_status and record["status"] != normalized_status):
+                    continue
+                searchable = " ".join(
+                    [
+                        record.get("source") or "",
+                        record.get("artifact") or "",
+                        record.get("notes") or "",
+                        record.get("tool") or "",
+                        record.get("target") or "",
+                        record.get("config") or "",
+                        record.get("report_id") or "",
+                    ]
+                    + record.get("log_paths", [])
+                    + record.get("errors", [])
+                    + record.get("warnings", [])
+                ).casefold()
+                if normalized_query and normalized_query not in searchable:
+                    continue
+                records.append({"project": row["name"], "record": record})
+        status_counts = {value: sum(item["record"]["status"] == value for item in records) for value in VALIDATION_STATUSES}
+
+        def aggregate(field: str) -> list[dict[str, Any]]:
+            counts: dict[str, dict[str, Any]] = {}
+            for item in records:
+                project_name = item["project"]
+                for message in item["record"].get(field, []):
+                    key = str(message).strip()
+                    if not key:
+                        continue
+                    entry = counts.setdefault(key, {"message": key, "count": 0, "projects": []})
+                    entry["count"] += 1
+                    if project_name not in entry["projects"]:
+                        entry["projects"].append(project_name)
+            return sorted(counts.values(), key=lambda item: (-item["count"], item["message"]))[: max(1, min(int(limit), 100))]
+
+        return {
+            "ok": True,
+            "project_filter": project,
+            "status_filter": normalized_status,
+            "query": query,
+            "record_count": len(records),
+            "project_count": len({item["project"] for item in records}),
+            "status_counts": status_counts,
+            "error_counts": aggregate("errors"),
+            "warning_counts": aggregate("warnings"),
+            "recent_records": records[-max(1, min(int(limit), 100)) :],
         }
 
     @staticmethod
@@ -1229,7 +1344,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.9.0",
+                "tool_version": "0.10.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1365,7 +1480,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.9.0",
+                "tool_version": "0.10.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })

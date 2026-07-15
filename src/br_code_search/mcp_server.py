@@ -121,6 +121,24 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "br_record_project_validation",
+        "description": "Persist external build, field verification or version-compatibility feedback outside the source repository.",
+        "inputSchema": object_schema(
+            {
+                "project": {"type": "string", "minLength": 1},
+                "kind": {"type": "string", "enum": ["build", "field", "compatibility"]},
+                "status": {"type": "string", "enum": ["passed", "failed", "unknown"]},
+                "source": {"type": "string", "default": "external"},
+                "as_version": {"type": "string", "minLength": 1},
+                "ar_version": {"type": "string", "minLength": 1},
+                "cpu_model": {"type": "string", "minLength": 1},
+                "artifact": {"type": "string", "minLength": 1},
+                "notes": {"type": "string", "default": ""},
+            },
+            ["project", "kind", "status"],
+        ),
+    },
+    {
         "name": "br_evaluate_retrieval",
         "description": "Run a versioned JSON retrieval dataset and report Hit@K/MRR without modifying the source repository.",
         "inputSchema": object_schema(
@@ -290,6 +308,17 @@ class McpServer:
                 arguments.get("backend", "hashing"),
                 model=arguments.get("model"),
                 dimension=arguments.get("dimension", 256),
+            ),
+            "br_record_project_validation": lambda: self.index.record_project_validation(
+                arguments["project"],
+                kind=arguments["kind"],
+                status=arguments["status"],
+                source=arguments.get("source", "external"),
+                as_version=arguments.get("as_version"),
+                ar_version=arguments.get("ar_version"),
+                cpu_model=arguments.get("cpu_model"),
+                artifact=arguments.get("artifact"),
+                notes=arguments.get("notes", ""),
             ),
             "br_evaluate_retrieval": lambda: evaluate_dataset(
                 self.index,

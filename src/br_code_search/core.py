@@ -178,6 +178,63 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+VALIDATION_KINDS = {"build", "field", "compatibility"}
+VALIDATION_STATUSES = {"passed", "failed", "unknown"}
+
+
+def _validation_records(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    records: list[dict[str, Any]] = []
+    for item in value[-50:]:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "")).strip().casefold()
+        status = str(item.get("status", "")).strip().casefold()
+        if kind not in VALIDATION_KINDS or status not in VALIDATION_STATUSES:
+            continue
+        record = {
+            "kind": kind,
+            "status": status,
+            "recorded_at": str(item.get("recorded_at") or utc_now()),
+            "source": str(item.get("source", "external"))[:200],
+            "as_version": str(item["as_version"])[:100] if item.get("as_version") else None,
+            "ar_version": str(item["ar_version"])[:100] if item.get("ar_version") else None,
+            "cpu_model": str(item["cpu_model"])[:100] if item.get("cpu_model") else None,
+            "artifact": str(item["artifact"])[:300] if item.get("artifact") else None,
+            "notes": str(item.get("notes", ""))[:2000],
+        }
+        records.append(record)
+    return records
+
+
+def validation_summary(value: Any) -> dict[str, Any]:
+    records = _validation_records(value)
+    latest_by_kind: dict[str, dict[str, Any]] = {}
+    for record in records:
+        latest_by_kind[record["kind"]] = record
+    return {
+        "record_count": len(records),
+        "latest": records[-1] if records else None,
+        "latest_by_kind": latest_by_kind,
+    }
+
+
+def validation_boost(row: sqlite3.Row | dict[str, Any]) -> float:
+    metadata_raw = row["metadata_json"] if "metadata_json" in row.keys() else "{}"
+    try:
+        metadata = json.loads(metadata_raw or "{}")
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    latest = validation_summary(metadata.get("validation_records", [])).get("latest_by_kind", {})
+    weights = {"build": 0.04, "field": 0.06, "compatibility": 0.03}
+    return round(
+        sum(weights[kind] * (1 if record["status"] == "passed" else -1 if record["status"] == "failed" else 0)
+            for kind, record in latest.items()),
+        6,
+    )
+
+
 def read_source(path: Path) -> tuple[str, str]:
     raw = path.read_bytes()
     if raw.startswith(b"\xef\xbb\xbf"):
@@ -718,6 +775,7 @@ class CodeSearchIndex:
             "deprecated": bool(value.get("deprecated", quality == "deprecated")),
             "do_not_copy": bool(value.get("do_not_copy", False)),
             "notes": str(value.get("notes", "")),
+            "validation_records": _validation_records(value.get("validation_records", [])),
         }
 
     def annotate_project(
@@ -742,12 +800,15 @@ class CodeSearchIndex:
             if row is None:
                 raise ValueError(f"Unknown project: {project}")
         annotations = self._load_project_annotations()
+        existing = annotations.get(project, {})
+        existing_records = existing.get("validation_records", []) if isinstance(existing, dict) else []
         annotations[project] = {
             "quality": quality,
             "verified": bool(verified),
             "deprecated": bool(deprecated),
             "do_not_copy": bool(do_not_copy),
             "notes": notes,
+            "validation_records": _validation_records(existing_records),
         }
         self.project_metadata_path.parent.mkdir(parents=True, exist_ok=True)
         self.project_metadata_path.write_text(
@@ -761,6 +822,80 @@ class CodeSearchIndex:
                 (quality, int(verified), int(deprecated), int(do_not_copy), notes, project),
             )
         return {"ok": True, "project": project, "metadata_path": str(self.project_metadata_path), **annotations[project]}
+
+    def record_project_validation(
+        self,
+        project: str,
+        *,
+        kind: str,
+        status: str,
+        source: str = "external",
+        as_version: str | None = None,
+        ar_version: str | None = None,
+        cpu_model: str | None = None,
+        artifact: str | None = None,
+        notes: str = "",
+    ) -> dict[str, Any]:
+        """Record external build, field verification or compatibility feedback."""
+        normalized_kind = kind.strip().casefold()
+        normalized_status = status.strip().casefold()
+        if normalized_kind not in VALIDATION_KINDS:
+            raise ValueError("kind must be one of: build, field, compatibility")
+        if normalized_status not in VALIDATION_STATUSES:
+            raise ValueError("status must be one of: passed, failed, unknown")
+        with closing(self.connect()) as connection, connection:
+            self._initialize(connection)
+            row = connection.execute(
+                "SELECT name, metadata_json FROM projects WHERE name=? COLLATE NOCASE", (project,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown project: {project}")
+        annotations = self._load_project_annotations()
+        current = annotations.get(row["name"], {})
+        if not isinstance(current, dict):
+            current = {}
+        records = _validation_records(current.get("validation_records", []))
+        record = _validation_records(
+            [{
+                "kind": normalized_kind,
+                "status": normalized_status,
+                "recorded_at": utc_now(),
+                "source": source,
+                "as_version": as_version,
+                "ar_version": ar_version,
+                "cpu_model": cpu_model,
+                "artifact": artifact,
+                "notes": notes,
+            }]
+        )[0]
+        records.append(record)
+        records = _validation_records(records)
+        current.update({"validation_records": records})
+        annotations[row["name"]] = current
+        self.project_metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        self.project_metadata_path.write_text(
+            json.dumps(annotations, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        try:
+            project_metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            project_metadata = {}
+        if not isinstance(project_metadata, dict):
+            project_metadata = {}
+        project_metadata["validation_records"] = records
+        with closing(self.connect()) as connection, connection:
+            self._initialize(connection)
+            connection.execute(
+                "UPDATE projects SET metadata_json=? WHERE name=? COLLATE NOCASE",
+                (json.dumps(project_metadata, ensure_ascii=False), row["name"]),
+            )
+        return {
+            "ok": True,
+            "project": row["name"],
+            "metadata_path": str(self.project_metadata_path),
+            "record": record,
+            "validation": validation_summary(records),
+        }
 
     @staticmethod
     def _project_roots(root: Path) -> dict[Path, Path | None]:
@@ -886,6 +1021,7 @@ class CodeSearchIndex:
                 metadata = parse_project_file(project_file) if project_file else {}
                 metadata.update(parse_project_environment(project_root))
                 annotation = self._project_annotation(project_root.name)
+                metadata["validation_records"] = annotation.get("validation_records", [])
                 relative_project_file = (
                     project_file.relative_to(project_root).as_posix() if project_file else None
                 )
@@ -940,7 +1076,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.5.1",
+                "tool_version": "0.6.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -986,6 +1122,7 @@ class CodeSearchIndex:
                 metadata = parse_project_file(project_file) if project_file else {}
                 metadata.update(parse_project_environment(project_root))
                 annotation = self._project_annotation(project_root.name)
+                metadata["validation_records"] = annotation.get("validation_records", [])
                 relative_project_file = project_file.relative_to(project_root).as_posix() if project_file else None
                 project_id = existing_projects.get(project_root)
                 if project_id is None:
@@ -1075,7 +1212,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.5.1",
+                "tool_version": "0.6.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -1187,6 +1324,8 @@ class CodeSearchIndex:
             except (TypeError, json.JSONDecodeError):
                 metadata = {}
             payload["technology_packages"] = metadata.get("technology_packages", {})
+            if "validation_records" in metadata:
+                payload["validation"] = validation_summary(metadata.get("validation_records"))
         if include_source:
             source = row["content"]
             payload["source"] = source[:max_chars]
@@ -1508,12 +1647,14 @@ class CodeSearchIndex:
                 score += 0.02
             if row["verified"]:
                 score += 0.04
+            score += validation_boost(row)
             scored.append((score, row))
         scored.sort(key=lambda item: (-item[0], item[1]["project_name"], item[1]["relative_path"], item[1]["start_line"]))
         results = []
         for score, row in scored[: max(1, min(int(limit), 50))]:
             payload = self._row_payload(row, include_source=include_source, max_chars=max_chars_per_result)
             payload["similarity_score"] = round(score, 6)
+            payload["validation_boost"] = validation_boost(row)
             results.append(payload)
         return {
             "ok": True,
@@ -2073,6 +2214,7 @@ class CodeSearchIndex:
             "notes": row["notes"],
             "metadata_path": str(self.project_metadata_path),
             "metadata": json.loads(row["metadata_json"]),
+            "validation": validation_summary(json.loads(row["metadata_json"] or "{}").get("validation_records", [])),
             "documents_by_type": type_counts,
             "documents_by_language": language_counts,
             "top_level_paths": top_paths,

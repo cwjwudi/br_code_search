@@ -16,7 +16,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, Sequence
 
-from .core import IDENTIFIER_RE, CodeSearchIndex, add_project_version_filters, utc_now
+from .core import IDENTIFIER_RE, CodeSearchIndex, add_project_version_filters, utc_now, validation_boost
 
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[\u3400-\u9fff]+")
@@ -459,33 +459,35 @@ def hybrid_search(
     query_vector = embedding.encode([query])[0]
     vectors, cache_hits, encoded_count = _cached_vectors(index, embedding, rows)
     query_tokens = {token.casefold() for token in IDENTIFIER_RE.findall(query) if len(token) > 1}
-    scored: list[tuple[float, float, float, float, Any]] = []
+    scored: list[tuple[float, float, float, float, float, Any]] = []
     for row in rows:
         semantic_score = max(0.0, min(1.0, (_cosine(query_vector, vectors[int(row["id"])]) + 1.0) / 2.0))
         lexical_score = _lexical_score(query_tokens, row)
         structural_score = _structural_score(row)
+        validation_score = validation_boost(row)
         score = (
             semantic_weight * semantic_score
             + lexical_weight * lexical_score
             + structural_weight * structural_score
+            + validation_score
         )
-        scored.append((score, semantic_score, lexical_score, structural_score, row))
-    scored.sort(key=lambda item: (-item[0], item[4]["project_name"], item[4]["relative_path"], item[4]["start_line"]))
+        scored.append((score, semantic_score, lexical_score, structural_score, validation_score, row))
+    scored.sort(key=lambda item: (-item[0], item[5]["project_name"], item[5]["relative_path"], item[5]["start_line"]))
     candidate_count = len(scored)
     ranked = scored[: max(limit, limit * 5 if aggregate_files else limit)]
     if aggregate_files:
-        rows_for_aggregation = [item[4] for item in ranked]
+        rows_for_aggregation = [item[5] for item in ranked]
         results = index._aggregate_file_rows(
             rows_for_aggregation,
             include_source=include_source,
             max_chars_per_result=max_chars_per_result,
             limit=limit,
         )
-        score_by_path: dict[tuple[str, str], tuple[float, float, float, float]] = {}
-        for score, semantic_score, lexical_score, structural_score, row in ranked:
+        score_by_path: dict[tuple[str, str], tuple[float, float, float, float, float]] = {}
+        for score, semantic_score, lexical_score, structural_score, validation_score, row in ranked:
             score_by_path.setdefault(
                 (row["project_name"], row["relative_path"]),
-                (score, semantic_score, lexical_score, structural_score),
+                (score, semantic_score, lexical_score, structural_score, validation_score),
             )
         for payload in results:
             components = score_by_path.get((payload["project"], payload["path"]))
@@ -496,11 +498,12 @@ def hybrid_search(
                         "semantic_score": round(components[1], 6),
                         "lexical_score": round(components[2], 6),
                         "structural_score": round(components[3], 6),
+                        "validation_boost": round(components[4], 6),
                     }
                 )
     else:
         results = []
-        for score, semantic_score, lexical_score, structural_score, row in ranked[:limit]:
+        for score, semantic_score, lexical_score, structural_score, validation_score, row in ranked[:limit]:
             payload = index._row_payload(row, include_source=include_source, max_chars=max_chars_per_result)
             payload.update(
                 {
@@ -508,6 +511,7 @@ def hybrid_search(
                     "semantic_score": round(semantic_score, 6),
                     "lexical_score": round(lexical_score, 6),
                     "structural_score": round(structural_score, 6),
+                    "validation_boost": round(validation_score, 6),
                 }
             )
             results.append(payload)

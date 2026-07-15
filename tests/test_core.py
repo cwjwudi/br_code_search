@@ -272,6 +272,28 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(0, self.index.search("DemoProgram")["count"])
         self.assertEqual(1, self.index.search("DemoProgram", quality="deprecated")["count"])
 
+    def test_project_validation_feedback_is_persisted_and_returned(self) -> None:
+        recorded = self.index.record_project_validation(
+            "ProjectA",
+            kind="build",
+            status="passed",
+            source="automation-studio",
+            as_version="4.12.5.95 SP",
+            ar_version="H4.93",
+            cpu_model="X20CP1585",
+            artifact="build-report.xml",
+        )
+        self.assertEqual("passed", recorded["record"]["status"])
+        self.assertEqual(1, recorded["validation"]["record_count"])
+        overview = self.index.project_overview("ProjectA")
+        self.assertEqual("passed", overview["validation"]["latest_by_kind"]["build"]["status"])
+        search = self.index.search("DemoProgram")
+        self.assertEqual("passed", search["results"][0]["validation"]["latest_by_kind"]["build"]["status"])
+        hybrid = self.index.search_hybrid("DemoProgram", backend="hashing", limit=1, include_source=False)
+        self.assertEqual(0.04, hybrid["results"][0]["validation_boost"])
+        self.index.rebuild(self.source)
+        self.assertEqual(1, self.index.project_overview("ProjectA")["validation"]["record_count"])
+
 
 if __name__ == "__main__":
     unittest.main()

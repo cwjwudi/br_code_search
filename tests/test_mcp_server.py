@@ -147,6 +147,20 @@ class McpServerTests(unittest.TestCase):
             self.assertFalse(annotated["result"]["isError"])
             self.assertEqual("gold", annotated["result"]["structuredContent"]["quality"])
 
+            validation = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 33,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_record_project_validation",
+                        "arguments": {"project": "Sample", "kind": "build", "status": "passed"},
+                    },
+                }
+            )
+            self.assertFalse(validation["result"]["isError"])
+            self.assertEqual("passed", validation["result"]["structuredContent"]["record"]["status"])
+
             tasks = server.handle(
                 {
                     "jsonrpc": "2.0",

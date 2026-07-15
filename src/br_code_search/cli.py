@@ -155,6 +155,17 @@ def build_parser() -> argparse.ArgumentParser:
     annotate.add_argument("--do-not-copy", action="store_true")
     annotate.add_argument("--notes", default="")
 
+    validation = subparsers.add_parser("record-validation", help="Record external build/field/compatibility feedback")
+    validation.add_argument("project")
+    validation.add_argument("--kind", choices=["build", "field", "compatibility"], required=True)
+    validation.add_argument("--status", choices=["passed", "failed", "unknown"], required=True)
+    validation.add_argument("--source", default="external")
+    validation.add_argument("--as-version")
+    validation.add_argument("--ar-version")
+    validation.add_argument("--cpu-model")
+    validation.add_argument("--artifact")
+    validation.add_argument("--notes", default="")
+
     evaluate = subparsers.add_parser("evaluate", help="Evaluate retrieval quality against a versioned JSON dataset")
     evaluate.add_argument(
         "dataset",
@@ -275,6 +286,18 @@ def main(argv: list[str] | None = None) -> int:
             result = index.find_references(args.name, project=args.project, limit=args.limit)
         elif args.command == "evaluate":
             result = evaluate_dataset(index, args.dataset, top_k=args.top_k, max_cases=args.max_cases)
+        elif args.command == "record-validation":
+            result = index.record_project_validation(
+                args.project,
+                kind=args.kind,
+                status=args.status,
+                source=args.source,
+                as_version=args.as_version,
+                ar_version=args.ar_version,
+                cpu_model=args.cpu_model,
+                artifact=args.artifact,
+                notes=args.notes,
+            )
         else:
             result = index.annotate_project(
                 args.project,

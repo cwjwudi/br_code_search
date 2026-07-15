@@ -324,6 +324,20 @@ def parse_declarations(text: str, *, standalone: bool = False) -> list[dict[str,
     return declarations
 
 
+def classify_reference_access(name: str, line: str) -> str:
+    """Classify the most useful ST access shape for one identifier occurrence."""
+    code = _strip_inline_comments(line)
+    escaped = re.escape(name)
+    lhs = rf"\b{escaped}\b(?:\s*\[[^\]]+\])?(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*\s*:="
+    if re.search(lhs, code, re.IGNORECASE):
+        return "write"
+    if re.search(rf"\b{escaped}\b\s*\(", code, re.IGNORECASE):
+        return "call"
+    if re.search(rf"\b{escaped}\b\s*\.", code, re.IGNORECASE):
+        return "member"
+    return "read"
+
+
 def parse_type_units(text: str) -> list[ParsedUnit]:
     lines = text.splitlines()
     units: list[ParsedUnit] = []
@@ -747,7 +761,7 @@ class CodeSearchIndex:
                 "schema_version": "4",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.1",
+                "tool_version": "0.4.2",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
@@ -858,7 +872,7 @@ class CodeSearchIndex:
             for project_root, project_id in list(existing_projects.items()):
                 if project_root not in project_ids:
                     connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
-            meta.update({"schema_version": "4", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.1"})
+            meta.update({"schema_version": "4", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.4.2"})
             connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
@@ -1449,6 +1463,12 @@ class CodeSearchIndex:
                     absolute_line = row["start_line"] + offset
                     declaration = declaration_by_line.get(absolute_line)
                     relation = "declaration" if declaration and declaration["name"].casefold() == name.casefold() else "use"
+                    code_line = _strip_inline_comments(line)
+                    access = (
+                        None
+                        if relation == "declaration"
+                        else "comment" if not pattern.search(code_line) else classify_reference_access(name, line)
+                    )
                     reference_key = (row["project_name"], row["relative_path"], absolute_line, relation)
                     if reference_key in seen_references:
                         continue
@@ -1465,6 +1485,7 @@ class CodeSearchIndex:
                             "line": absolute_line,
                             "text": line.strip()[:500],
                             "relation": relation,
+                            "access": access,
                             "declared_type": declaration.get("type_name") if declaration else None,
                             "quality": row["quality"],
                             "verified": bool(row["verified"]),

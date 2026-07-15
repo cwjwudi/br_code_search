@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.4.1`.
+Current release: `0.4.2`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -84,7 +84,7 @@ Example MCP client configuration:
 - `br_get_project_overview`: summarize one indexed Automation Studio project
 - `br_get_task_configuration`: retrieve `.sw` TaskClass/Task assignments and explicit cycle attributes
 - `br_get_type_definition`: retrieve indexed `TYPE` declarations
-- `br_find_references`: return whole-identifier, line-level references to a symbol or variable
+- `br_find_references`: return whole-identifier, line-level references with declaration/use and read/write/call/member access classification
 
 `br_get_program_context` is the preferred tool before an AI writes code. It
 returns the matched source plus related `Init`, `Cyclic`, `Exit`, action,

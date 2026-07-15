@@ -37,16 +37,20 @@
 - 从 `.var` 和 ST VAR 区块提取变量声明、类型表达式和实际行号；
 - 在程序上下文中解析到同工程或库中的 `TYPE`/`FUNCTION_BLOCK` 定义，并标注引用/声明。
 
-## v0.4.1 — 当前版本：变量类型上下文
+## v0.4.1 — 已完成：变量类型上下文
 
 - `br_get_program_context` 返回去重后的变量声明与类型引用；
 - 类型引用优先匹配当前工程，再补充库和其他参考工程定义；
 - `br_find_references` 返回 `declaration/use`、声明类型和精确行号；
 - MCP stdio 在 Windows 默认代码页下强制使用 UTF-8，避免中文 B&R 源码导致协议中断。
 
+## v0.4.2 — 当前版本：变量访问方向
+
+- `br_find_references` 区分 `read`、`write`、`call`、`member` 和 `comment`；
+- 保留 `declaration/use` 关系、声明类型和精确行号，并去除同文件重复行。
+
 后续 v0.4.x 小版本继续完善：
 
-- 在 `declaration/use` 基础上区分变量读取、写入、调用和成员访问；
 - 结果去重、同文件聚合和质量标签排序；
 - AS、AR、CPU 和库版本过滤。
 

@@ -175,7 +175,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
     {
         "name": "br_find_references",
-        "description": "Find whole-identifier references to a B&R symbol or variable and return line-level source context.",
+        "description": "Find whole-identifier references to a B&R symbol or variable with declaration/use and read/write/call/member access classification.",
         "inputSchema": object_schema(
             {
                 "name": {"type": "string", "minLength": 1},

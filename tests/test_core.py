@@ -6,6 +6,7 @@ from pathlib import Path
 
 from br_code_search.core import (
     CodeSearchIndex,
+    classify_reference_access,
     parse_declarations,
     parse_software_tasks,
     parse_st_units,
@@ -57,6 +58,12 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(["fbAxis", "values"], [item["name"] for item in declarations])
         self.assertEqual("MpAxisBasic", declarations[0]["type_name"])
         self.assertEqual("DemoType", declarations[1]["type_name"])
+
+    def test_reference_access_classifier(self) -> None:
+        self.assertEqual("write", classify_reference_access("Axis", "Axis.Enable := TRUE;"))
+        self.assertEqual("call", classify_reference_access("Axis", "Axis();"))
+        self.assertEqual("member", classify_reference_access("Axis", "IF Axis.Enable THEN"))
+        self.assertEqual("read", classify_reference_access("Axis", "Ready := Axis;"))
 
     def test_cp1252_is_not_misclassified_as_gb18030(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -156,6 +163,9 @@ class IndexTests(unittest.TestCase):
             references["count"],
             len({(item["path"], item["line"], item["relation"]) for item in references["references"]}),
         )
+        axis_refs = self.index.find_references("Axis")
+        self.assertIn("write", {item["access"] for item in axis_refs["references"]})
+        self.assertIn("call", {item["access"] for item in axis_refs["references"]})
 
     def test_incremental_sync_and_similar_search(self) -> None:
         first = self.index.sync(self.source)

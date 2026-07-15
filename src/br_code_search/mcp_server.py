@@ -58,6 +58,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "project": {"type": "string", "minLength": 1},
                 "origin": {"type": "string", "enum": ["all", "user", "library", "physical"], "default": "all"},
                 "language": {"type": "string", "minLength": 1},
+                "symbol_type": {"type": "string", "minLength": 1},
                 "as_version": {"type": "string", "minLength": 1, "description": "Automation Studio version prefix."},
                 "ar_version": {"type": "string", "minLength": 1, "description": "Automation Runtime version substring; target-aware when available."},
                 "cpu_model": {"type": "string", "minLength": 1, "description": "CPU/module model substring; target-aware when available."},
@@ -110,6 +111,40 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "inputSchema": object_schema({}),
     },
     {
+        "name": "br_get_library_usage",
+        "description": "Find projects and source units that declare or use a B&R technology library.",
+        "inputSchema": object_schema(
+            {
+                "library": {"type": "string", "minLength": 1},
+                "project": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100},
+            },
+            ["library"],
+        ),
+    },
+    {
+        "name": "br_find_similar_function_block",
+        "description": "Compare only indexed FUNCTION_BLOCK units using the B&R lexical/structural similarity scorer.",
+        "inputSchema": object_schema(
+            {
+                "query": {"type": "string", "minLength": 1},
+                "reference_document_id": {"type": "integer", "minimum": 1},
+                "project": {"type": "string", "minLength": 1},
+                "quality": {"type": "string", "enum": ["gold", "normal", "deprecated"]},
+                "verified_only": {"type": "boolean", "default": False},
+                "include_deprecated": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                "include_source": {"type": "boolean", "default": True},
+                "max_chars_per_result": {"type": "integer", "minimum": 200, "maximum": 30000, "default": 4000},
+            }
+        ),
+    },
+    {
+        "name": "br_get_project_architecture",
+        "description": "Return task, module, symbol, language, target, library and validation architecture for one project.",
+        "inputSchema": object_schema({"project": {"type": "string", "minLength": 1}}, ["project"]),
+    },
+    {
         "name": "br_get_embedding_status",
         "description": "Check local embedding backend availability without downloading or loading a model.",
         "inputSchema": object_schema(
@@ -134,8 +169,37 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "cpu_model": {"type": "string", "minLength": 1},
                 "artifact": {"type": "string", "minLength": 1},
                 "notes": {"type": "string", "default": ""},
+                "errors": {"type": "array", "items": {"type": "string"}, "default": []},
+                "warnings": {"type": "array", "items": {"type": "string"}, "default": []},
             },
             ["project", "kind", "status"],
+        ),
+    },
+    {
+        "name": "br_get_compile_history",
+        "description": "Return recorded external build results and diagnostics for one project.",
+        "inputSchema": object_schema(
+            {
+                "project": {"type": "string", "minLength": 1},
+                "status": {"type": "string", "enum": ["passed", "failed", "unknown"]},
+                "as_version": {"type": "string", "minLength": 1},
+                "ar_version": {"type": "string", "minLength": 1},
+                "cpu_model": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+            },
+            ["project"],
+        ),
+    },
+    {
+        "name": "br_search_build_errors",
+        "description": "Search recorded build errors, warnings and diagnostic notes across indexed projects.",
+        "inputSchema": object_schema(
+            {
+                "query": {"type": "string", "minLength": 1},
+                "project": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+            },
+            ["query"],
         ),
     },
     {
@@ -277,6 +341,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             ["name"],
         ),
     },
+    {
+        "name": "br_compare_implementations",
+        "description": "Compare two indexed source units with provenance, validation metadata and a bounded unified diff.",
+        "inputSchema": object_schema(
+            {
+                "left_document_id": {"type": "integer", "minimum": 1},
+                "right_document_id": {"type": "integer", "minimum": 1},
+                "max_chars": {"type": "integer", "minimum": 1000, "maximum": 100000, "default": 30000},
+            },
+            ["left_document_id", "right_document_id"],
+        ),
+    },
 ]
 
 
@@ -304,6 +380,21 @@ class McpServer:
         calls: dict[str, Callable[[], dict[str, Any]]] = {
             "br_index_codebase": index_codebase,
             "br_get_index_status": self.index.status,
+            "br_get_library_usage": lambda: self.index.get_library_usage(
+                arguments["library"], project=arguments.get("project"), limit=arguments.get("limit", 100)
+            ),
+            "br_find_similar_function_block": lambda: self.index.find_similar_function_block(
+                arguments.get("query"),
+                reference_document_id=arguments.get("reference_document_id"),
+                project=arguments.get("project"),
+                quality=arguments.get("quality"),
+                verified_only=arguments.get("verified_only", False),
+                include_deprecated=arguments.get("include_deprecated", False),
+                limit=arguments.get("limit", 10),
+                include_source=arguments.get("include_source", True),
+                max_chars_per_result=arguments.get("max_chars_per_result", 4000),
+            ),
+            "br_get_project_architecture": lambda: self.index.get_project_architecture(arguments["project"]),
             "br_get_embedding_status": lambda: self.index.embedding_status(
                 arguments.get("backend", "hashing"),
                 model=arguments.get("model"),
@@ -319,6 +410,19 @@ class McpServer:
                 cpu_model=arguments.get("cpu_model"),
                 artifact=arguments.get("artifact"),
                 notes=arguments.get("notes", ""),
+                errors=arguments.get("errors", []),
+                warnings=arguments.get("warnings", []),
+            ),
+            "br_get_compile_history": lambda: self.index.get_compile_history(
+                arguments["project"],
+                status=arguments.get("status"),
+                as_version=arguments.get("as_version"),
+                ar_version=arguments.get("ar_version"),
+                cpu_model=arguments.get("cpu_model"),
+                limit=arguments.get("limit", 50),
+            ),
+            "br_search_build_errors": lambda: self.index.search_build_errors(
+                arguments["query"], project=arguments.get("project"), limit=arguments.get("limit", 100)
             ),
             "br_evaluate_retrieval": lambda: evaluate_dataset(
                 self.index,
@@ -358,6 +462,7 @@ class McpServer:
                 project=arguments.get("project"),
                 origin=arguments.get("origin"),
                 language=arguments.get("language"),
+                symbol_type=arguments.get("symbol_type"),
                 as_version=arguments.get("as_version"),
                 ar_version=arguments.get("ar_version"),
                 cpu_model=arguments.get("cpu_model"),
@@ -428,6 +533,11 @@ class McpServer:
             ),
             "br_find_references": lambda: self.index.find_references(
                 arguments["name"], project=arguments.get("project"), limit=arguments.get("limit", 100)
+            ),
+            "br_compare_implementations": lambda: self.index.compare_implementations(
+                arguments["left_document_id"],
+                arguments["right_document_id"],
+                max_chars=arguments.get("max_chars", 30000),
             ),
         }
         call = calls.get(name)

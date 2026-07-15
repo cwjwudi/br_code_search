@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
@@ -12,7 +13,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SUPPORTED_EXTENSIONS = {".st", ".fun", ".var", ".typ", ".c", ".h", ".apj", ".pkg", ".sw"}
+SUPPORTED_EXTENSIONS = {
+    ".st", ".fun", ".var", ".typ", ".c", ".h", ".cpp", ".cc", ".hpp", ".py",
+    ".json", ".yaml", ".yml", ".xml", ".apj", ".pkg", ".sw",
+}
 IGNORED_DIRECTORIES = {
     ".git",
     ".svn",
@@ -40,6 +44,7 @@ C_FUNCTION_RE = re.compile(
     r"[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\([^;]*\)\s*\{",
     re.IGNORECASE,
 )
+PY_UNIT_RE = re.compile(r"^(\s*)(async\s+def|def|class)\s+([A-Za-z_]\w*)\b")
 IEC_BUILTIN_TYPES = {
     "ANY",
     "ANY_BIT",
@@ -182,6 +187,14 @@ VALIDATION_KINDS = {"build", "field", "compatibility"}
 VALIDATION_STATUSES = {"passed", "failed", "unknown"}
 
 
+def _string_list(value: Any, *, limit: int = 50, max_chars: int = 2000) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item)[:max_chars] for item in value[:limit] if str(item).strip()]
+
+
 def _validation_records(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -203,6 +216,8 @@ def _validation_records(value: Any) -> list[dict[str, Any]]:
             "cpu_model": str(item["cpu_model"])[:100] if item.get("cpu_model") else None,
             "artifact": str(item["artifact"])[:300] if item.get("artifact") else None,
             "notes": str(item.get("notes", ""))[:2000],
+            "errors": _string_list(item.get("errors")),
+            "warnings": _string_list(item.get("warnings")),
         }
         records.append(record)
     return records
@@ -268,6 +283,14 @@ def language_for(path: Path) -> str:
         ".typ": "iec_types",
         ".c": "c",
         ".h": "c_header",
+        ".cpp": "cpp",
+        ".cc": "cpp",
+        ".hpp": "cpp_header",
+        ".py": "python",
+        ".json": "json",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".xml": "xml",
         ".apj": "automation_studio_project",
         ".pkg": "automation_studio_package",
         ".sw": "automation_studio_software",
@@ -469,6 +492,26 @@ def parse_c_units(text: str) -> list[ParsedUnit]:
     return units
 
 
+def parse_python_units(text: str) -> list[ParsedUnit]:
+    lines = text.splitlines()
+    starts: list[tuple[int, int, str, str]] = []
+    for index, line in enumerate(lines):
+        match = PY_UNIT_RE.match(line)
+        if not match:
+            continue
+        kind = "python_class" if match.group(2) == "class" else "python_function"
+        starts.append((index, len(match.group(1).replace("\t", "    ")), kind, match.group(3)))
+    units: list[ParsedUnit] = []
+    for position, (start, indent, kind, name) in enumerate(starts):
+        end = len(lines)
+        for next_start, next_indent, _next_kind, _next_name in starts[position + 1 :]:
+            if next_indent <= indent:
+                end = next_start
+                break
+        units.append(_unit(lines, start, end, name, kind))
+    return units
+
+
 def _xml_local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
@@ -521,8 +564,10 @@ def parse_units(path: Path, text: str) -> list[ParsedUnit]:
         units = parse_var_units(text, path.stem)
     elif suffix == ".typ":
         units = parse_type_units(text)
-    elif suffix in {".c", ".h"}:
+    elif suffix in {".c", ".h", ".cpp", ".cc", ".hpp"}:
         units = parse_c_units(text)
+    elif suffix == ".py":
+        units = parse_python_units(text)
     else:
         units = []
     if units:
@@ -535,6 +580,14 @@ def parse_units(path: Path, text: str) -> list[ParsedUnit]:
         ".typ": "type_file",
         ".c": "c_file",
         ".h": "header_file",
+        ".cpp": "cpp_file",
+        ".cc": "cpp_file",
+        ".hpp": "cpp_header_file",
+        ".py": "python_file",
+        ".json": "json_file",
+        ".yaml": "yaml_file",
+        ".yml": "yaml_file",
+        ".xml": "xml_file",
         ".apj": "project_metadata",
         ".pkg": "package_metadata",
         ".sw": "software_configuration",
@@ -835,6 +888,8 @@ class CodeSearchIndex:
         cpu_model: str | None = None,
         artifact: str | None = None,
         notes: str = "",
+        errors: list[str] | None = None,
+        warnings: list[str] | None = None,
     ) -> dict[str, Any]:
         """Record external build, field verification or compatibility feedback."""
         normalized_kind = kind.strip().casefold()
@@ -866,6 +921,8 @@ class CodeSearchIndex:
                 "cpu_model": cpu_model,
                 "artifact": artifact,
                 "notes": notes,
+                "errors": errors or [],
+                "warnings": warnings or [],
             }]
         )[0]
         records.append(record)
@@ -895,6 +952,102 @@ class CodeSearchIndex:
             "metadata_path": str(self.project_metadata_path),
             "record": record,
             "validation": validation_summary(records),
+        }
+
+    def get_compile_history(
+        self,
+        project: str,
+        *,
+        status: str | None = None,
+        as_version: str | None = None,
+        ar_version: str | None = None,
+        cpu_model: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Return external build records for one project without touching its source."""
+        self._ensure_index()
+        normalized_status = status.strip().casefold() if status else None
+        if normalized_status and normalized_status not in VALIDATION_STATUSES:
+            raise ValueError("status must be one of: passed, failed, unknown")
+        with closing(self.connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT name, metadata_json FROM projects WHERE name=? COLLATE NOCASE", (project,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown project: {project}")
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        records = [record for record in _validation_records(metadata.get("validation_records", [])) if record["kind"] == "build"]
+        def matches(record: dict[str, Any]) -> bool:
+            return not (
+                (normalized_status and record["status"] != normalized_status)
+                or (as_version and record.get("as_version") != as_version)
+                or (ar_version and record.get("ar_version") != ar_version)
+                or (cpu_model and record.get("cpu_model") != cpu_model)
+            )
+        records = [record for record in records if matches(record)][-max(1, min(int(limit), 100)) :]
+        return {
+            "ok": True,
+            "project": row["name"],
+            "filters": {
+                "status": normalized_status,
+                "as_version": as_version,
+                "ar_version": ar_version,
+                "cpu_model": cpu_model,
+            },
+            "count": len(records),
+            "records": records,
+            "latest": records[-1] if records else None,
+        }
+
+    def search_build_errors(
+        self,
+        query: str,
+        *,
+        project: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Search recorded build errors/warnings and diagnostic notes."""
+        self._ensure_index()
+        query = query.strip().casefold()
+        if not query:
+            raise ValueError("query must not be empty")
+        project_clause = " WHERE p.name=? COLLATE NOCASE" if project else ""
+        params: list[Any] = [project] if project else []
+        matches: list[dict[str, Any]] = []
+        with closing(self.connect()) as connection, connection:
+            rows = connection.execute(
+                "SELECT p.name, p.metadata_json FROM projects p" + project_clause + " ORDER BY p.name",
+                params,
+            ).fetchall()
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            for record in _validation_records(metadata.get("validation_records", [])):
+                if record["kind"] != "build":
+                    continue
+                searchable = " ".join(
+                    [record.get("source") or "", record.get("artifact") or "", record.get("notes") or ""]
+                    + record.get("errors", [])
+                    + record.get("warnings", [])
+                ).casefold()
+                if query not in searchable:
+                    continue
+                matches.append({"project": row["name"], "record": record})
+                if len(matches) >= max(1, min(int(limit), 500)):
+                    break
+            if len(matches) >= max(1, min(int(limit), 500)):
+                break
+        return {
+            "ok": True,
+            "query": query,
+            "project_filter": project,
+            "count": len(matches),
+            "matches": matches,
         }
 
     @staticmethod
@@ -1076,7 +1229,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.6.0",
+                "tool_version": "0.7.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1212,7 +1365,7 @@ class CodeSearchIndex:
                 "schema_version": "8",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.6.0",
+                "tool_version": "0.7.0",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })
@@ -1540,6 +1693,7 @@ class CodeSearchIndex:
         project: str | None = None,
         origin: str | None = None,
         language: str | None = None,
+        symbol_type: str | None = None,
         as_version: str | None = None,
         ar_version: str | None = None,
         cpu_model: str | None = None,
@@ -1587,6 +1741,9 @@ class CodeSearchIndex:
             if language:
                 filters.append("d.language = ?")
                 params.append(language)
+            if symbol_type:
+                filters.append("d.symbol_type = ? COLLATE NOCASE")
+                params.append(symbol_type)
             add_project_version_filters(
                 filters,
                 params,
@@ -1662,6 +1819,7 @@ class CodeSearchIndex:
             "query": query if reference is None else None,
             "reference_document_id": reference_document_id,
             "filters": {"project": project, "origin": origin, "language": language,
+                        "symbol_type": symbol_type,
                         "as_version": as_version, "ar_version": ar_version, "cpu_model": cpu_model,
                         "library": library, "library_version": library_version, "quality": quality,
                         "verified_only": verified_only, "include_deprecated": include_deprecated},
@@ -1760,6 +1918,65 @@ class CodeSearchIndex:
         if row is None:
             raise ValueError(f"Unknown document_id: {document_id}")
         return {"ok": True, "result": self._row_payload(row, include_source=True, max_chars=max_chars)}
+
+    def compare_implementations(
+        self,
+        left_document_id: int,
+        right_document_id: int,
+        *,
+        max_chars: int = 30000,
+    ) -> dict[str, Any]:
+        """Compare two indexed source units with metadata and a bounded unified diff."""
+        self._ensure_index()
+        max_chars = max(1000, min(int(max_chars), 100000))
+        query = """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
+            d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+            d.target_cpu_models, d.target_ar_versions, d.target_configurations,
+            p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
+            p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
+            FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?"""
+        with closing(self.connect()) as connection, connection:
+            left = connection.execute(query, (int(left_document_id),)).fetchone()
+            right = connection.execute(query, (int(right_document_id),)).fetchone()
+        if left is None or right is None:
+            missing = left_document_id if left is None else right_document_id
+            raise ValueError(f"Unknown document_id: {missing}")
+        left_lines = left["content"].splitlines()
+        right_lines = right["content"].splitlines()
+        diff_lines = list(
+            difflib.unified_diff(
+                left_lines,
+                right_lines,
+                fromfile=f"{left['project_name']}/{left['relative_path']}",
+                tofile=f"{right['project_name']}/{right['relative_path']}",
+                lineterm="",
+            )
+        )
+        diff_text = "\n".join(diff_lines)
+        diff_truncated = len(diff_text) > max_chars
+        if diff_truncated:
+            diff_text = diff_text[:max_chars]
+        matcher = difflib.SequenceMatcher(None, left_lines, right_lines)
+        added = removed = changed = 0
+        for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
+            if tag == "insert":
+                added += new_end - new_start
+            elif tag == "delete":
+                removed += old_end - old_start
+            elif tag == "replace":
+                removed += old_end - old_start
+                added += new_end - new_start
+                changed += max(old_end - old_start, new_end - new_start)
+        return {
+            "ok": True,
+            "left": self._row_payload(left, include_source=False),
+            "right": self._row_payload(right, include_source=False),
+            "same": left["content"] == right["content"],
+            "diff": diff_text,
+            "diff_truncated": diff_truncated,
+            "stats": {"added_lines": added, "removed_lines": removed, "changed_blocks": changed},
+            "note": "Comparison is based on indexed source units; it does not modify either project.",
+        }
 
     def get_context(self, document_id: int, *, max_chars: int = 30000) -> dict[str, Any]:
         self._ensure_index()
@@ -2142,6 +2359,153 @@ class CodeSearchIndex:
             if len(references) >= max(1, min(int(limit), 500)):
                 break
         return {"ok": True, "name": name, "count": len(references), "references": references}
+
+    def get_library_usage(
+        self,
+        library: str,
+        *,
+        project: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Find technology-package declarations and source usage for a library name."""
+        self._ensure_index()
+        library = library.strip()
+        if not library:
+            raise ValueError("library must not be empty")
+        needle = f"%{library.casefold()}%"
+        max_projects = max(1, min(int(limit), 100))
+        project_clause = " AND p.name=? COLLATE NOCASE" if project else ""
+        project_params: list[Any] = [project] if project else []
+        with closing(self.connect()) as connection, connection:
+            candidates = connection.execute(
+                """SELECT p.id, p.name, p.metadata_json, p.as_version, p.project_version,
+                p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
+                FROM projects p
+                WHERE (lower(p.metadata_json) LIKE ? OR EXISTS (
+                    SELECT 1 FROM documents d WHERE d.project_id=p.id
+                    AND (lower(COALESCE(d.symbol_name, '')) LIKE ?
+                         OR lower(d.content) LIKE ? OR lower(d.relative_path) LIKE ?)
+                ))""" + project_clause + " ORDER BY p.name LIMIT ?",
+                [needle, needle, needle, needle, *project_params, max_projects],
+            ).fetchall()
+            projects: list[dict[str, Any]] = []
+            for project_row in candidates:
+                try:
+                    metadata = json.loads(project_row["metadata_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    metadata = {}
+                packages = metadata.get("technology_packages", {}) if isinstance(metadata, dict) else {}
+                package_matches = {
+                    str(name): value
+                    for name, value in packages.items()
+                    if library.casefold() in str(name).casefold()
+                    or library.casefold() in str(value).casefold()
+                } if isinstance(packages, dict) else {}
+                rows = connection.execute(
+                    """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
+                    d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                    d.target_cpu_models, d.target_ar_versions, d.target_configurations,
+                    p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
+                    p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
+                    FROM documents d JOIN projects p ON p.id=d.project_id
+                    WHERE d.project_id=? AND (lower(COALESCE(d.symbol_name, '')) LIKE ?
+                          OR lower(d.content) LIKE ? OR lower(d.relative_path) LIKE ?)
+                    ORDER BY d.relative_path, d.start_line LIMIT 20""",
+                    (project_row["id"], needle, needle, needle),
+                ).fetchall()
+                if not package_matches and not rows:
+                    continue
+                projects.append(
+                    {
+                        "project": project_row["name"],
+                        "as_version": project_row["as_version"],
+                        "project_version": project_row["project_version"],
+                        "quality": project_row["quality"],
+                        "verified": bool(project_row["verified"]),
+                        "package_matches": package_matches,
+                        "document_count": len(rows),
+                        "documents": [self._row_payload(row, include_source=False) for row in rows],
+                    }
+                )
+        return {
+            "ok": True,
+            "library": library,
+            "project_filter": project,
+            "count": len(projects),
+            "projects": projects,
+            "note": "Usage combines project technology-package metadata with source symbol/content/path matches.",
+        }
+
+    def get_project_architecture(self, project: str) -> dict[str, Any]:
+        """Return a compact architecture summary for one indexed project."""
+        overview = self.project_overview(project)
+        with closing(self.connect()) as connection, connection:
+            row = connection.execute("SELECT id FROM projects WHERE name=? COLLATE NOCASE", (project,)).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown project: {project}")
+            documents = connection.execute(
+                "SELECT relative_path, symbol_type, language, origin FROM documents WHERE project_id=?",
+                (row["id"],),
+            ).fetchall()
+        module_counts: dict[str, int] = {}
+        origin_counts: dict[str, int] = {}
+        for document in documents:
+            parts = str(document["relative_path"]).replace("\\", "/").split("/")
+            module = "/".join(parts[:2]) if len(parts) > 1 else parts[0]
+            module_counts[module] = module_counts.get(module, 0) + 1
+            origin = str(document["origin"])
+            origin_counts[origin] = origin_counts.get(origin, 0) + 1
+        metadata = overview.get("metadata") if isinstance(overview.get("metadata"), dict) else {}
+        architecture = {
+            "module_counts": dict(sorted(module_counts.items(), key=lambda item: (-item[1], item[0]))[:100]),
+            "origin_counts": origin_counts,
+            "documents": len(documents),
+            "documents_by_type": overview["documents_by_type"],
+            "documents_by_language": overview["documents_by_language"],
+            "tasks": overview["tasks"],
+            "technology_packages": metadata.get("technology_packages", {}),
+            "targets": {
+                "cpu_models": overview["cpu_models"],
+                "ar_versions": overview["ar_versions"],
+            },
+            "validation": overview["validation"],
+        }
+        return {"ok": True, "project": overview["project"], "architecture": architecture, "overview": overview}
+
+    def find_similar_function_block(
+        self,
+        query: str | None = None,
+        *,
+        reference_document_id: int | None = None,
+        project: str | None = None,
+        quality: str | None = None,
+        verified_only: bool = False,
+        include_deprecated: bool = False,
+        limit: int = 10,
+        include_source: bool = True,
+        max_chars_per_result: int = 4000,
+    ) -> dict[str, Any]:
+        """Find function-block implementations with similar identifiers and control structure."""
+        if reference_document_id is None and query:
+            exact = self.find_symbol(query, project=project, symbol_type="function_block", limit=1)
+            if exact["count"]:
+                reference_document_id = int(exact["results"][0]["document_id"])
+                query = None
+        result = self.search_similar(
+            query,
+            reference_document_id=reference_document_id,
+            project=project,
+            symbol_type="function_block",
+            quality=quality,
+            verified_only=verified_only,
+            include_deprecated=include_deprecated,
+            limit=limit,
+            include_source=include_source,
+            max_chars_per_result=max_chars_per_result,
+        )
+        result["mode"] = "function_block_similarity"
+        result["note"] = "Only indexed FUNCTION_BLOCK units are compared; validation and project quality remain visible per result."
+        return result
 
     def project_overview(self, project: str) -> dict[str, Any]:
         self._ensure_index()

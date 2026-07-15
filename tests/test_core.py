@@ -7,9 +7,11 @@ from pathlib import Path
 from br_code_search.core import (
     CodeSearchIndex,
     classify_reference_access,
+    language_for,
     parse_declarations,
     parse_software_tasks,
     parse_st_units,
+    parse_units,
     parse_type_units,
     parse_var_units,
     read_source,
@@ -82,6 +84,18 @@ class ParserTests(unittest.TestCase):
             self.assertIn("中文注释", text)
 
 
+    def test_standard_code_and_config_units_are_indexable(self) -> None:
+        python_units = parse_units(
+            Path("tools.py"),
+            "def helper(value):\n    return value\n\nclass Worker:\n    pass\n",
+        )
+        self.assertEqual({"python_function", "python_class"}, {unit.symbol_type for unit in python_units})
+        self.assertEqual("cpp", language_for(Path("module.cpp")))
+        self.assertEqual("json", language_for(Path("settings.json")))
+        json_units = parse_units(Path("settings.json"), '{"timeout": 10}\n')
+        self.assertEqual("json_file", json_units[0].symbol_type)
+
+
 class IndexTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -141,6 +155,12 @@ class IndexTests(unittest.TestCase):
         self.assertEqual("5.24.1", overview["metadata"]["technology_packages"]["mapp"])
         self.assertEqual(["H4.93"], overview["ar_versions"])
         self.assertEqual(["X20CP1585"], overview["cpu_models"])
+        usage = self.index.get_library_usage("mapp")
+        self.assertEqual(1, usage["count"])
+        self.assertEqual("5.24.1", usage["projects"][0]["package_matches"]["mapp"])
+        architecture = self.index.get_project_architecture("ProjectA")
+        self.assertEqual(len(overview["tasks"]), len(architecture["architecture"]["tasks"]))
+        self.assertIn("Logical/Control", architecture["architecture"]["module_counts"])
 
     def test_search_and_origin_filter(self) -> None:
         result = self.index.search("MpAxisBasic", origin="user")
@@ -174,6 +194,12 @@ class IndexTests(unittest.TestCase):
         self.assertIn("Demo", {item["name"] for item in context["declarations"]})
         demo_type = next(item for item in context["type_references"] if item["type_name"] == "DemoType")
         self.assertTrue(demo_type["resolved"])
+        init = self.index.find_symbol("_INIT")
+        comparison = self.index.compare_implementations(
+            symbols["results"][0]["document_id"], init["results"][0]["document_id"], max_chars=5000
+        )
+        self.assertFalse(comparison["same"])
+        self.assertGreater(comparison["stats"]["added_lines"] + comparison["stats"]["removed_lines"], 0)
 
     def test_tasks_types_and_references(self) -> None:
         tasks = self.index.get_task_configuration("ProjectA")
@@ -254,6 +280,11 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(0, second["embedding_documents_encoded"])
         self.assertTrue(all("hybrid_score" in item for item in second["results"]))
 
+    def test_function_block_similarity_is_type_filtered(self) -> None:
+        result = self.index.find_similar_function_block("MpAxisBasic", include_source=False)
+        self.assertEqual("function_block_similarity", result["mode"])
+        self.assertTrue(all(item["symbol_type"] == "function_block" for item in result["results"]))
+
     def test_project_annotations_filter_results(self) -> None:
         annotation = self.index.annotate_project(
             "ProjectA", quality="gold", verified=True, notes="现场验证通过"
@@ -291,8 +322,18 @@ class IndexTests(unittest.TestCase):
         self.assertEqual("passed", search["results"][0]["validation"]["latest_by_kind"]["build"]["status"])
         hybrid = self.index.search_hybrid("DemoProgram", backend="hashing", limit=1, include_source=False)
         self.assertEqual(0.04, hybrid["results"][0]["validation_boost"])
+        failed = self.index.record_project_validation(
+            "ProjectA", kind="build", status="failed", errors=["E123: type mismatch"], warnings=["W9: unused"],
+        )
+        self.assertEqual("failed", failed["record"]["status"])
+        history = self.index.get_compile_history("ProjectA")
+        self.assertEqual(2, history["count"])
+        self.assertEqual("failed", history["latest"]["status"])
+        errors = self.index.search_build_errors("E123")
+        self.assertEqual(1, errors["count"])
+        self.assertEqual("ProjectA", errors["matches"][0]["project"])
         self.index.rebuild(self.source)
-        self.assertEqual(1, self.index.project_overview("ProjectA")["validation"]["record_count"])
+        self.assertEqual(2, self.index.project_overview("ProjectA")["validation"]["record_count"])
 
 
 if __name__ == "__main__":

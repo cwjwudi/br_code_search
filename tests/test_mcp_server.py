@@ -52,6 +52,42 @@ class McpServerTests(unittest.TestCase):
             )
             self.assertFalse(indexed["result"]["isError"])
 
+            library_usage = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 34,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_library_usage", "arguments": {"library": "SearchMe"}},
+                }
+            )
+            self.assertFalse(library_usage["result"]["isError"])
+            self.assertEqual(1, library_usage["result"]["structuredContent"]["count"])
+
+            architecture = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 35,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_project_architecture", "arguments": {"project": "Sample"}},
+                }
+            )
+            self.assertFalse(architecture["result"]["isError"])
+            self.assertEqual("Sample", architecture["result"]["structuredContent"]["project"])
+
+            similar_fb = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 36,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_find_similar_function_block",
+                        "arguments": {"query": "DemoType", "include_source": False},
+                    },
+                }
+            )
+            self.assertFalse(similar_fb["result"]["isError"])
+            self.assertEqual("function_block_similarity", similar_fb["result"]["structuredContent"]["mode"])
+
             embedding_status = server.handle(
                 {
                     "jsonrpc": "2.0",
@@ -154,12 +190,42 @@ class McpServerTests(unittest.TestCase):
                     "method": "tools/call",
                     "params": {
                         "name": "br_record_project_validation",
-                        "arguments": {"project": "Sample", "kind": "build", "status": "passed"},
+                        "arguments": {
+                            "project": "Sample",
+                            "kind": "build",
+                            "status": "failed",
+                            "errors": ["E_SAMPLE: failed compile"],
+                        },
                     },
                 }
             )
             self.assertFalse(validation["result"]["isError"])
-            self.assertEqual("passed", validation["result"]["structuredContent"]["record"]["status"])
+            self.assertEqual("failed", validation["result"]["structuredContent"]["record"]["status"])
+
+            history = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 37,
+                    "method": "tools/call",
+                    "params": {"name": "br_get_compile_history", "arguments": {"project": "Sample"}},
+                }
+            )
+            self.assertFalse(history["result"]["isError"])
+            self.assertEqual(1, history["result"]["structuredContent"]["count"])
+
+            build_errors = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 38,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_search_build_errors",
+                        "arguments": {"query": "E_SAMPLE"},
+                    },
+                }
+            )
+            self.assertFalse(build_errors["result"]["isError"])
+            self.assertEqual(1, build_errors["result"]["structuredContent"]["count"])
 
             tasks = server.handle(
                 {
@@ -194,6 +260,20 @@ class McpServerTests(unittest.TestCase):
                 }
             )
             self.assertGreaterEqual(references["result"]["structuredContent"]["count"], 1)
+
+            comparison = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 39,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_compare_implementations",
+                        "arguments": {"left_document_id": 1, "right_document_id": 1},
+                    },
+                }
+            )
+            self.assertFalse(comparison["result"]["isError"])
+            self.assertTrue(comparison["result"]["structuredContent"]["same"])
 
 
 if __name__ == "__main__":

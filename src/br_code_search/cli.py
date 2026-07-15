@@ -104,6 +104,16 @@ def build_parser() -> argparse.ArgumentParser:
     similar.add_argument("--limit", type=int, default=10)
     similar.add_argument("--no-source", action="store_true")
 
+    similar_fb = subparsers.add_parser("similar-function-block", help="Find similar FUNCTION_BLOCK implementations")
+    similar_fb.add_argument("query", nargs="?")
+    similar_fb.add_argument("--reference-document-id", type=int)
+    similar_fb.add_argument("--project")
+    similar_fb.add_argument("--quality", choices=["gold", "normal", "deprecated"])
+    similar_fb.add_argument("--verified-only", action="store_true")
+    similar_fb.add_argument("--include-deprecated", action="store_true")
+    similar_fb.add_argument("--limit", type=int, default=10)
+    similar_fb.add_argument("--no-source", action="store_true")
+
     hybrid = subparsers.add_parser("hybrid", help="Hybrid lexical/structural/vector retrieval")
     hybrid.add_argument("query")
     hybrid.add_argument("--project")
@@ -131,6 +141,14 @@ def build_parser() -> argparse.ArgumentParser:
     overview = subparsers.add_parser("overview", help="Show one project's indexed structure")
     overview.add_argument("project")
 
+    architecture = subparsers.add_parser("architecture", help="Show one project's architecture summary")
+    architecture.add_argument("project")
+
+    library_usage = subparsers.add_parser("library-usage", help="Find projects and source units using a library")
+    library_usage.add_argument("library")
+    library_usage.add_argument("--project")
+    library_usage.add_argument("--limit", type=int, default=100)
+
     tasks = subparsers.add_parser("tasks", help="Show B&R TaskClass/Task assignments")
     tasks.add_argument("project")
     tasks.add_argument("--task-name")
@@ -146,6 +164,11 @@ def build_parser() -> argparse.ArgumentParser:
     references.add_argument("name")
     references.add_argument("--project")
     references.add_argument("--limit", type=int, default=100)
+
+    compare = subparsers.add_parser("compare", help="Compare two indexed source units")
+    compare.add_argument("left_document_id", type=int)
+    compare.add_argument("right_document_id", type=int)
+    compare.add_argument("--max-chars", type=int, default=30000)
 
     annotate = subparsers.add_parser("annotate-project", help="Persist project quality metadata")
     annotate.add_argument("project")
@@ -165,6 +188,21 @@ def build_parser() -> argparse.ArgumentParser:
     validation.add_argument("--cpu-model")
     validation.add_argument("--artifact")
     validation.add_argument("--notes", default="")
+    validation.add_argument("--error", dest="errors", action="append", default=[])
+    validation.add_argument("--warning", dest="warnings", action="append", default=[])
+
+    compile_history = subparsers.add_parser("compile-history", help="Show recorded build history for a project")
+    compile_history.add_argument("project")
+    compile_history.add_argument("--status", choices=["passed", "failed", "unknown"])
+    compile_history.add_argument("--as-version")
+    compile_history.add_argument("--ar-version")
+    compile_history.add_argument("--cpu-model")
+    compile_history.add_argument("--limit", type=int, default=50)
+
+    build_errors = subparsers.add_parser("search-build-errors", help="Search recorded build errors and warnings")
+    build_errors.add_argument("query")
+    build_errors.add_argument("--project")
+    build_errors.add_argument("--limit", type=int, default=100)
 
     evaluate = subparsers.add_parser("evaluate", help="Evaluate retrieval quality against a versioned JSON dataset")
     evaluate.add_argument(
@@ -245,6 +283,17 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 include_source=not args.no_source,
             )
+        elif args.command == "similar-function-block":
+            result = index.find_similar_function_block(
+                args.query,
+                reference_document_id=args.reference_document_id,
+                project=args.project,
+                quality=args.quality,
+                verified_only=args.verified_only,
+                include_deprecated=args.include_deprecated,
+                limit=args.limit,
+                include_source=not args.no_source,
+            )
         elif args.command == "hybrid":
             result = index.search_hybrid(
                 args.query,
@@ -272,6 +321,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "overview":
             result = index.project_overview(args.project)
+        elif args.command == "architecture":
+            result = index.get_project_architecture(args.project)
+        elif args.command == "library-usage":
+            result = index.get_library_usage(args.library, project=args.project, limit=args.limit)
         elif args.command == "tasks":
             result = index.get_task_configuration(
                 args.project,
@@ -284,6 +337,10 @@ def main(argv: list[str] | None = None) -> int:
             result = index.get_type_definition(args.type_name, project=args.project)
         elif args.command == "references":
             result = index.find_references(args.name, project=args.project, limit=args.limit)
+        elif args.command == "compare":
+            result = index.compare_implementations(
+                args.left_document_id, args.right_document_id, max_chars=args.max_chars
+            )
         elif args.command == "evaluate":
             result = evaluate_dataset(index, args.dataset, top_k=args.top_k, max_cases=args.max_cases)
         elif args.command == "record-validation":
@@ -297,7 +354,20 @@ def main(argv: list[str] | None = None) -> int:
                 cpu_model=args.cpu_model,
                 artifact=args.artifact,
                 notes=args.notes,
+                errors=args.errors,
+                warnings=args.warnings,
             )
+        elif args.command == "compile-history":
+            result = index.get_compile_history(
+                args.project,
+                status=args.status,
+                as_version=args.as_version,
+                ar_version=args.ar_version,
+                cpu_model=args.cpu_model,
+                limit=args.limit,
+            )
+        elif args.command == "search-build-errors":
+            result = index.search_build_errors(args.query, project=args.project, limit=args.limit)
         else:
             result = index.annotate_project(
                 args.project,

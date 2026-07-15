@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.6.0`.
+Current release: `0.7.0`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -14,6 +14,8 @@ this tool's `var/` directory by default.
 - IEC Structured Text: `.st`, `.fun`
 - Declarations and types: `.var`, `.typ`
 - ANSI C: `.c`, `.h`
+- C++: `.cpp`, `.cc`, `.hpp`
+- Python and configuration: `.py`, `.json`, `.yaml`, `.yml`, `.xml`
 - B&R project/package metadata: `.apj`, `.pkg`, `.sw`
 
 Generated build directories and binary artifacts are ignored. Results retain
@@ -30,9 +32,14 @@ python -m br_code_search.cli sync --source C:\Users\BR\code_base
 python -m br_code_search.cli status
 python -m br_code_search.cli embedding-status --backend hashing
 python -m br_code_search.cli record-validation ProjectName --kind build --status passed --source "Automation Studio"
+python -m br_code_search.cli compile-history ProjectName
+python -m br_code_search.cli search-build-errors "E123"
 python -m br_code_search.cli search MpAxisBasic --origin user
 python -m br_code_search.cli find-symbol fbHomeMaster
 python -m br_code_search.cli similar "timeout reset alarm cylinder" --origin user
+python -m br_code_search.cli similar-function-block MpAxisBasic --no-source
+python -m br_code_search.cli library-usage mapp
+python -m br_code_search.cli architecture ProjectName
 python -m br_code_search.cli search MpAxisBasic --as-version 4.12 --ar-version H4.93 --cpu-model X20CP1686X --library mapp6D
 python -m br_code_search.cli search fbMpAbMasterCalc --aggregate-files --limit 5
 python -m br_code_search.cli tasks "2406长虹飞狮"
@@ -42,6 +49,7 @@ python -m br_code_search.cli annotate-project "2406长虹飞狮" --quality gold 
 python -m br_code_search.cli search MpAxisBasic --quality gold --verified-only --origin user
 python -m br_code_search.cli evaluate eval/retrieval_queries.json --top-k 5
 python -m br_code_search.cli hybrid "fault restart timeout" --backend hashing --limit 5
+python -m br_code_search.cli compare 123 456 --max-chars 10000
 ```
 
 Start the MCP server:
@@ -83,10 +91,15 @@ Example MCP client configuration:
 - `br_get_index_status`: return index statistics and configured paths
 - `br_get_embedding_status`: check optional local embedding runtime availability
 - `br_record_project_validation`: record external build/field/version feedback outside the source repository
+- `br_get_compile_history`: return recorded build results and diagnostics for a project
+- `br_search_build_errors`: search recorded build errors/warnings across projects
 - `br_evaluate_retrieval`: run a versioned JSON query set and report Hit@K/MRR
 - `br_annotate_project`: persist project quality and verification metadata outside the source repository
 - `br_search_code`: full-text and exact source search
 - `br_find_similar_code`: lightweight lexical/structural neighbor search
+- `br_find_similar_function_block`: compare only `FUNCTION_BLOCK` implementations
+- `br_get_library_usage`: find project and source-unit usage of a technology library
+- `br_get_project_architecture`: summarize modules, tasks, symbols, targets and validation
 - `br_search_hybrid`: combine optional local vectors with lexical/structural ranking
 - `br_find_symbol`: exact or prefix symbol lookup
 - `br_get_symbol`: retrieve one indexed source unit by document id
@@ -95,6 +108,7 @@ Example MCP client configuration:
 - `br_get_task_configuration`: retrieve `.sw` TaskClass/Task assignments and explicit cycle attributes
 - `br_get_type_definition`: retrieve indexed `TYPE` declarations
 - `br_find_references`: return whole-identifier, line-level references with declaration/use and read/write/call/member access classification
+- `br_compare_implementations`: compare two indexed units with provenance and a bounded unified diff
 
 `br_search_code`, `br_find_similar_code` and `br_find_symbol` accept optional
 `as_version`, `ar_version`, `cpu_model`, `library` and `library_version` filters.
@@ -127,6 +141,10 @@ offline baseline rather than trained semantic language understanding. Cycle valu
 attribute exists in the source configuration. Parse fallbacks are exposed
 as ordinary file units so source remains searchable even when a dialect is not
 recognized.
+
+External build, field-verification and compatibility records are stored outside
+the source tree. They are returned by project/result APIs and can contribute a
+small, explicit boost or penalty to lexical/structural similarity ranking.
 
 For multi-target Automation Studio projects, target metadata is inferred from
 the nearest `Cpu.pkg`/`Config.pkg` and from `.sw` Task-to-program assignments.

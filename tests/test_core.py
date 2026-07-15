@@ -118,6 +118,20 @@ class IndexTests(unittest.TestCase):
         self.assertIn("Logical/Control/Init.st", paths)
         self.assertIn("Logical/Control/Variables.var", paths)
 
+    def test_incremental_sync_and_similar_search(self) -> None:
+        first = self.index.sync(self.source)
+        self.assertEqual("sync", first["mode"])
+        self.assertGreaterEqual(first["skipped_files"], 6)
+        cyclic = self.project / "Logical" / "Control" / "Cyclic.st"
+        cyclic.write_text(PROGRAM + "\n// added reference pattern\n", encoding="utf-8")
+        changed = self.index.sync(self.source)
+        self.assertEqual(1, changed["changed_files"])
+        self.assertGreaterEqual(changed["skipped_files"], 5)
+        symbols = self.index.find_symbol("DemoProgram")
+        similar = self.index.search_similar(reference_document_id=symbols["results"][0]["document_id"], limit=3)
+        self.assertEqual("lexical_structural", similar["mode"])
+        self.assertLessEqual(similar["count"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

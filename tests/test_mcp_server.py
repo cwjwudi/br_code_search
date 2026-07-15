@@ -54,6 +54,20 @@ class McpServerTests(unittest.TestCase):
             )
             self.assertEqual(1, searched["result"]["structuredContent"]["count"])
 
+            similar = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_find_similar_code",
+                        "arguments": {"query": "SearchMe := 42", "limit": 2, "include_source": False},
+                    },
+                }
+            )
+            self.assertFalse(similar["result"]["isError"])
+            self.assertEqual("lexical_structural", similar["result"]["structuredContent"]["mode"])
+
 
 if __name__ == "__main__":
     unittest.main()

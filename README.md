@@ -24,9 +24,11 @@ From the repository root:
 ```powershell
 $env:PYTHONPATH = "$PWD\src"
 python -m br_code_search.cli index --source C:\Users\BR\code_base
+python -m br_code_search.cli sync --source C:\Users\BR\code_base
 python -m br_code_search.cli status
 python -m br_code_search.cli search MpAxisBasic --origin user
 python -m br_code_search.cli find-symbol fbHomeMaster
+python -m br_code_search.cli similar "timeout reset alarm cylinder" --origin user
 ```
 
 Start the MCP server:
@@ -64,9 +66,10 @@ Example MCP client configuration:
 
 ## MCP tools
 
-- `br_index_codebase`: rebuild the local index from the configured source root
+- `br_index_codebase`: synchronize or rebuild the local index from the configured source root
 - `br_get_index_status`: return index statistics and configured paths
 - `br_search_code`: full-text and exact source search
+- `br_find_similar_code`: lightweight lexical/structural neighbor search
 - `br_find_symbol`: exact or prefix symbol lookup
 - `br_get_symbol`: retrieve one indexed source unit by document id
 - `br_get_program_context`: retrieve a source unit with bounded sibling context
@@ -79,8 +82,12 @@ character budget.
 
 ## Current limits
 
-This first version performs lexical search and tolerant structural parsing. It
+This version performs lexical search, incremental synchronization and tolerant structural parsing. It
 does not claim compiler-grade AST accuracy, semantic/vector search, complete
 cross-reference analysis, or task-cycle extraction. Parse fallbacks are exposed
 as ordinary file units so source remains searchable even when a dialect is not
 recognized.
+
+The similarity tool is deliberately labeled `lexical_structural`: it uses
+identifier/control-token overlap with language and symbol-kind boosts. It is a
+stable intermediate step, not a replacement for future embedding search.

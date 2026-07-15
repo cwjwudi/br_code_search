@@ -30,14 +30,36 @@ def object_schema(properties: dict[str, Any], required: list[str] | None = None)
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "br_index_codebase",
-        "description": "Rebuild the local SQLite/FTS index from the configured read-only B&R code repository.",
+        "description": "Synchronize or rebuild the local SQLite/FTS index from the configured read-only B&R code repository.",
         "inputSchema": object_schema(
             {
                 "source_root": {
                     "type": "string",
                     "description": "Optional source root override. The source repository is never modified.",
                     "minLength": 1,
-                }
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["sync", "rebuild"],
+                    "default": "sync",
+                    "description": "sync updates only changed files; rebuild recreates all indexed documents.",
+                },
+            }
+        ),
+    },
+    {
+        "name": "br_find_similar_code",
+        "description": "Find lexical/structural neighbors by a natural-language/code query or an indexed document id.",
+        "inputSchema": object_schema(
+            {
+                "query": {"type": "string", "minLength": 1},
+                "reference_document_id": {"type": "integer", "minimum": 1},
+                "project": {"type": "string", "minLength": 1},
+                "origin": {"type": "string", "enum": ["all", "user", "library", "physical"], "default": "all"},
+                "language": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                "include_source": {"type": "boolean", "default": True},
+                "max_chars_per_result": {"type": "integer", "minimum": 200, "maximum": 30000, "default": 4000},
             }
         ),
     },
@@ -125,13 +147,24 @@ class McpServer:
             source = arguments.get("source_root") or self.source_root
             if not source:
                 raise ValueError("No source root configured. Pass --source or source_root.")
-            return self.index.rebuild(source)
+            mode = arguments.get("mode", "sync")
+            return self.index.rebuild(source) if mode == "rebuild" else self.index.sync(source)
 
         calls: dict[str, Callable[[], dict[str, Any]]] = {
             "br_index_codebase": index_codebase,
             "br_get_index_status": self.index.status,
             "br_search_code": lambda: self.index.search(
                 arguments["query"],
+                project=arguments.get("project"),
+                origin=arguments.get("origin"),
+                language=arguments.get("language"),
+                limit=arguments.get("limit", 10),
+                include_source=arguments.get("include_source", True),
+                max_chars_per_result=arguments.get("max_chars_per_result", 4000),
+            ),
+            "br_find_similar_code": lambda: self.index.search_similar(
+                arguments.get("query"),
+                reference_document_id=arguments.get("reference_document_id"),
                 project=arguments.get("project"),
                 origin=arguments.get("origin"),
                 language=arguments.get("language"),

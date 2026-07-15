@@ -33,6 +33,13 @@ def build_parser() -> argparse.ArgumentParser:
         required=not bool(os.environ.get("BR_CODE_SEARCH_SOURCE")),
     )
 
+    sync = subparsers.add_parser("sync", help="Incrementally synchronize the code index")
+    sync.add_argument(
+        "--source",
+        default=os.environ.get("BR_CODE_SEARCH_SOURCE"),
+        required=not bool(os.environ.get("BR_CODE_SEARCH_SOURCE")),
+    )
+
     subparsers.add_parser("status", help="Show index status")
 
     search = subparsers.add_parser("search", help="Search indexed code")
@@ -57,6 +64,15 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("document_id", type=int)
     context.add_argument("--max-chars", type=int, default=30000)
 
+    similar = subparsers.add_parser("similar", help="Find lexical/structural neighbors")
+    similar.add_argument("query", nargs="?")
+    similar.add_argument("--reference-document-id", type=int)
+    similar.add_argument("--project")
+    similar.add_argument("--origin", choices=["all", "user", "library", "physical"], default="all")
+    similar.add_argument("--language")
+    similar.add_argument("--limit", type=int, default=10)
+    similar.add_argument("--no-source", action="store_true")
+
     overview = subparsers.add_parser("overview", help="Show one project's indexed structure")
     overview.add_argument("project")
     return parser
@@ -68,6 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "index":
             result = index.rebuild(args.source)
+        elif args.command == "sync":
+            result = index.sync(args.source)
         elif args.command == "status":
             result = index.status()
         elif args.command == "search":
@@ -90,6 +108,16 @@ def main(argv: list[str] | None = None) -> int:
             result = index.get_symbol(args.document_id, max_chars=args.max_chars)
         elif args.command == "context":
             result = index.get_context(args.document_id, max_chars=args.max_chars)
+        elif args.command == "similar":
+            result = index.search_similar(
+                args.query,
+                reference_document_id=args.reference_document_id,
+                project=args.project,
+                origin=args.origin,
+                language=args.language,
+                limit=args.limit,
+                include_source=not args.no_source,
+            )
         else:
             result = index.project_overview(args.project)
     except (OSError, ValueError) as exc:

@@ -75,6 +75,16 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS idx_documents_symbol ON documents(symbol_name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_documents_project_path ON documents(project_id, relative_path);
 CREATE INDEX IF NOT EXISTS idx_documents_origin ON documents(origin);
+CREATE TABLE IF NOT EXISTS source_files (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    relative_path TEXT NOT NULL,
+    raw_hash TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    modified_ns INTEGER NOT NULL,
+    encoding TEXT NOT NULL,
+    indexed_at TEXT NOT NULL,
+    PRIMARY KEY(project_id, relative_path)
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     symbol_name,
     relative_path,
@@ -336,14 +346,84 @@ class CodeSearchIndex:
     def _initialize(self, connection: sqlite3.Connection) -> None:
         connection.executescript(SCHEMA)
 
+    @staticmethod
+    def _project_roots(root: Path) -> dict[Path, Path | None]:
+        project_files = sorted(root.rglob("*.apj"))
+        project_roots: dict[Path, Path | None] = {path.parent.resolve(): path for path in project_files}
+        if not project_roots:
+            project_roots[root] = None
+        return project_roots
+
+    @staticmethod
+    def _remove_file_documents(connection: sqlite3.Connection, project_id: int, relative_path: str) -> None:
+        ids = connection.execute(
+            "SELECT id FROM documents WHERE project_id=? AND relative_path=?",
+            (project_id, relative_path),
+        ).fetchall()
+        connection.executemany("DELETE FROM documents_fts WHERE rowid=?", [(row[0],) for row in ids])
+        connection.execute(
+            "DELETE FROM documents WHERE project_id=? AND relative_path=?",
+            (project_id, relative_path),
+        )
+        connection.execute(
+            "DELETE FROM source_files WHERE project_id=? AND relative_path=?",
+            (project_id, relative_path),
+        )
+
+    def _index_file(
+        self,
+        connection: sqlite3.Connection,
+        path: Path,
+        project_id: int,
+        project_name: str,
+        project_root: Path,
+        raw_hash: str,
+    ) -> tuple[int, str | None]:
+        text, encoding = read_source(path)
+        relative_path = path.relative_to(project_root).as_posix()
+        origin = origin_for(relative_path)
+        units = parse_units(path, text)
+        for unit in units:
+            digest = hashlib.sha256(unit.content.encode("utf-8", errors="replace")).hexdigest()
+            cursor = connection.execute(
+                """INSERT INTO documents
+                (project_id, relative_path, language, origin, symbol_name, symbol_type,
+                 start_line, end_line, encoding, content_hash, content)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    project_id,
+                    relative_path,
+                    language_for(path),
+                    origin,
+                    unit.symbol_name,
+                    unit.symbol_type,
+                    unit.start_line,
+                    unit.end_line,
+                    encoding,
+                    digest,
+                    unit.content,
+                ),
+            )
+            document_id = int(cursor.lastrowid)
+            connection.execute(
+                "INSERT INTO documents_fts(rowid, symbol_name, relative_path, project_name, content) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (document_id, unit.symbol_name or "", relative_path, project_name, unit.content),
+            )
+        stat = path.stat()
+        connection.execute(
+            """INSERT OR REPLACE INTO source_files
+            (project_id, relative_path, raw_hash, byte_size, modified_ns, encoding, indexed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (project_id, relative_path, raw_hash, stat.st_size, stat.st_mtime_ns, encoding, utc_now()),
+        )
+        return len(units), encoding
+
     def rebuild(self, source_root: str | Path) -> dict[str, Any]:
         root = Path(source_root).expanduser().resolve()
         if not root.is_dir():
             raise ValueError(f"Source root does not exist or is not a directory: {root}")
-        project_files = sorted(root.rglob("*.apj"))
-        project_roots = {path.parent.resolve(): path for path in project_files}
-        if not project_roots:
-            project_roots[root] = None
+        project_roots = self._project_roots(root)
         warnings: list[str] = []
         with closing(self.connect()) as connection, connection:
             self._initialize(connection)
@@ -381,48 +461,26 @@ class CodeSearchIndex:
                 if project_root not in project_ids:
                     continue
                 try:
-                    text, encoding = read_source(path)
+                    raw = path.read_bytes()
+                    raw_hash = hashlib.sha256(raw).hexdigest()
+                    documents, _encoding = self._index_file(
+                        connection,
+                        path,
+                        project_ids[project_root],
+                        project_root.name,
+                        project_root,
+                        raw_hash,
+                    )
                 except OSError as exc:
                     warnings.append(f"Could not read {path}: {exc}")
                     continue
-                relative_path = path.relative_to(project_root).as_posix()
-                origin = origin_for(relative_path)
-                project_name = project_root.name
-                units = parse_units(path, text)
                 indexed_files += 1
-                for unit in units:
-                    digest = hashlib.sha256(unit.content.encode("utf-8", errors="replace")).hexdigest()
-                    cursor = connection.execute(
-                        """INSERT INTO documents
-                        (project_id, relative_path, language, origin, symbol_name, symbol_type,
-                         start_line, end_line, encoding, content_hash, content)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            project_ids[project_root],
-                            relative_path,
-                            language_for(path),
-                            origin,
-                            unit.symbol_name,
-                            unit.symbol_type,
-                            unit.start_line,
-                            unit.end_line,
-                            encoding,
-                            digest,
-                            unit.content,
-                        ),
-                    )
-                    document_id = int(cursor.lastrowid)
-                    connection.execute(
-                        "INSERT INTO documents_fts(rowid, symbol_name, relative_path, project_name, content) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (document_id, unit.symbol_name or "", relative_path, project_name, unit.content),
-                    )
-                    indexed_documents += 1
+                indexed_documents += documents
             meta = {
-                "schema_version": "1",
+                "schema_version": "2",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.1.0",
+                "tool_version": "0.2.0",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
@@ -435,6 +493,106 @@ class CodeSearchIndex:
             "files": indexed_files,
             "documents": indexed_documents,
             "warnings": warnings[:50],
+        }
+
+    def sync(self, source_root: str | Path) -> dict[str, Any]:
+        """Synchronize only added, changed and removed source files."""
+        root = Path(source_root).expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError(f"Source root does not exist or is not a directory: {root}")
+        if not self.database_path.exists():
+            result = self.rebuild(root)
+            result.update({"mode": "rebuild", "added_files": result["files"], "changed_files": 0, "removed_files": 0, "skipped_files": 0})
+            return result
+        project_roots = self._project_roots(root)
+        warnings: list[str] = []
+        with closing(self.connect()) as connection, connection:
+            self._initialize(connection)
+            meta = {row["key"]: row["value"] for row in connection.execute("SELECT key, value FROM meta")}
+            if meta.get("source_root") != str(root):
+                result = self.rebuild(root)
+                result.update({"mode": "rebuild", "added_files": result["files"], "changed_files": 0, "removed_files": 0, "skipped_files": 0})
+                return result
+            existing_projects = {
+                Path(row["root_path"]): int(row["id"])
+                for row in connection.execute("SELECT id, root_path FROM projects")
+            }
+            project_ids: dict[Path, int] = {}
+            for project_root, project_file in project_roots.items():
+                metadata = parse_project_file(project_file) if project_file else {}
+                relative_project_file = project_file.relative_to(project_root).as_posix() if project_file else None
+                project_id = existing_projects.get(project_root)
+                if project_id is None:
+                    cursor = connection.execute(
+                        """INSERT INTO projects
+                        (name, root_path, project_file, as_version, project_version, description, metadata_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (project_root.name, str(project_root), relative_project_file, metadata.get("as_version"),
+                         metadata.get("project_version"), metadata.get("description"),
+                         json.dumps(metadata, ensure_ascii=False)),
+                    )
+                    project_id = int(cursor.lastrowid)
+                else:
+                    connection.execute(
+                        """UPDATE projects SET name=?, project_file=?, as_version=?, project_version=?,
+                        description=?, metadata_json=? WHERE id=?""",
+                        (project_root.name, relative_project_file, metadata.get("as_version"),
+                         metadata.get("project_version"), metadata.get("description"),
+                         json.dumps(metadata, ensure_ascii=False), project_id),
+                    )
+                project_ids[project_root] = project_id
+            current_keys: set[tuple[int, str]] = set()
+            added = changed = skipped = 0
+            documents_added = 0
+            for path in sorted(root.rglob("*")):
+                if not path.is_file() or not _should_index(path, root):
+                    continue
+                candidates = [candidate for candidate in project_roots if path.is_relative_to(candidate)]
+                project_root = max(candidates, key=lambda item: len(item.parts)) if candidates else root
+                if project_root not in project_ids:
+                    continue
+                relative_path = path.relative_to(project_root).as_posix()
+                key = (project_ids[project_root], relative_path)
+                current_keys.add(key)
+                raw = path.read_bytes()
+                raw_hash = hashlib.sha256(raw).hexdigest()
+                previous = connection.execute(
+                    "SELECT raw_hash FROM source_files WHERE project_id=? AND relative_path=?", key
+                ).fetchone()
+                if previous and previous[0] == raw_hash:
+                    skipped += 1
+                    continue
+                if previous:
+                    changed += 1
+                else:
+                    added += 1
+                try:
+                    self._remove_file_documents(connection, *key)
+                    count, _encoding = self._index_file(
+                        connection, path, key[0], project_root.name, project_root, raw_hash
+                    )
+                    documents_added += count
+                except (OSError, UnicodeError) as exc:
+                    warnings.append(f"Could not update {path}: {exc}")
+            stale = [
+                (int(row["project_id"]), row["relative_path"])
+                for row in connection.execute("SELECT project_id, relative_path FROM source_files")
+                if (int(row["project_id"]), row["relative_path"]) not in current_keys
+            ]
+            for key in stale:
+                self._remove_file_documents(connection, *key)
+            for project_root, project_id in list(existing_projects.items()):
+                if project_root not in project_ids:
+                    connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
+            meta.update({"schema_version": "2", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.2.0"})
+            connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
+            project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+            document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        return {
+            "ok": True, "mode": "sync", "source_root": str(root), "database": str(self.database_path),
+            "projects": project_count, "documents": document_count, "documents_added": documents_added,
+            "added_files": added, "changed_files": changed, "removed_files": len(stale),
+            "skipped_files": skipped, "warnings": warnings[:50],
         }
 
     def status(self) -> dict[str, Any]:
@@ -571,6 +729,103 @@ class CodeSearchIndex:
                 self._row_payload(row, include_source=include_source, max_chars=max_chars_per_result)
                 for row in rows
             ],
+        }
+
+    def search_similar(
+        self,
+        query: str | None = None,
+        *,
+        reference_document_id: int | None = None,
+        project: str | None = None,
+        origin: str | None = None,
+        language: str | None = None,
+        limit: int = 10,
+        include_source: bool = True,
+        max_chars_per_result: int = 4000,
+    ) -> dict[str, Any]:
+        """Find lexical/structural neighbors without pretending to be vector search."""
+        self._ensure_index()
+        reference: sqlite3.Row | None = None
+        with closing(self.connect()) as connection, connection:
+            if reference_document_id is not None:
+                reference = connection.execute(
+                    """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
+                    d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content
+                    FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?""",
+                    (int(reference_document_id),),
+                ).fetchone()
+                if reference is None:
+                    raise ValueError(f"Unknown document_id: {reference_document_id}")
+                query_text = reference["content"]
+            else:
+                query_text = (query or "").strip()
+            if not query_text:
+                raise ValueError("query or reference_document_id must be provided")
+            tokens = {token.casefold() for token in IDENTIFIER_RE.findall(query_text) if len(token) > 1}
+            if not tokens:
+                raise ValueError("query did not contain searchable identifiers")
+            fts_query = " OR ".join(f'"{token.replace(chr(34), chr(34) * 2)}"*' for token in list(tokens)[:40])
+            filters: list[str] = []
+            params: list[Any] = [fts_query]
+            if project:
+                filters.append("p.name = ? COLLATE NOCASE")
+                params.append(project)
+            if origin and origin != "all":
+                filters.append("d.origin = ?")
+                params.append(origin)
+            if language:
+                filters.append("d.language = ?")
+                params.append(language)
+            if reference is not None:
+                filters.append("d.id <> ?")
+                params.append(int(reference_document_id))
+            rows = connection.execute(
+                """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
+                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content
+                FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN projects p ON p.id=d.project_id
+                WHERE documents_fts MATCH ?""" + (" AND " + " AND ".join(filters) if filters else "") +
+                " ORDER BY bm25(documents_fts) LIMIT 500",
+                params,
+            ).fetchall()
+        scored: list[tuple[float, sqlite3.Row]] = []
+        reference_type = reference["symbol_type"] if reference is not None else None
+        reference_language = reference["language"] if reference is not None else None
+        for row in rows:
+            candidate_tokens = {token.casefold() for token in IDENTIFIER_RE.findall(row["content"]) if len(token) > 1}
+            if not candidate_tokens:
+                continue
+            overlap = len(tokens & candidate_tokens)
+            union = len(tokens | candidate_tokens)
+            score = overlap / union if union else 0.0
+            if reference_type and row["symbol_type"] == reference_type:
+                score += 0.12
+            if reference_language and row["language"] == reference_language:
+                score += 0.08
+            if row["symbol_type"] in {"program", "action", "function_block", "function", "c_function", "source_file"}:
+                score += 0.12
+            elif row["symbol_type"] == "variable_block":
+                score += 0.03
+            elif row["symbol_type"] == "data_type":
+                score += 0.05
+            elif row["symbol_type"] == "variable":
+                score -= 0.08
+            if row["origin"] == "user":
+                score += 0.02
+            scored.append((score, row))
+        scored.sort(key=lambda item: (-item[0], item[1]["project_name"], item[1]["relative_path"], item[1]["start_line"]))
+        results = []
+        for score, row in scored[: max(1, min(int(limit), 50))]:
+            payload = self._row_payload(row, include_source=include_source, max_chars=max_chars_per_result)
+            payload["similarity_score"] = round(score, 6)
+            results.append(payload)
+        return {
+            "ok": True,
+            "mode": "lexical_structural",
+            "query": query if reference is None else None,
+            "reference_document_id": reference_document_id,
+            "count": len(results),
+            "results": results,
+            "note": "Scores use identifier/control-token overlap plus language and symbol-kind boosts; this is not embedding search.",
         }
 
     def find_symbol(

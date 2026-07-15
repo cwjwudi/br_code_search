@@ -110,7 +110,10 @@ CREATE TABLE IF NOT EXISTS documents (
     end_line INTEGER NOT NULL,
     encoding TEXT NOT NULL,
     content_hash TEXT NOT NULL,
-    content TEXT NOT NULL
+    content TEXT NOT NULL,
+    target_cpu_models TEXT NOT NULL DEFAULT '[]',
+    target_ar_versions TEXT NOT NULL DEFAULT '[]',
+    target_configurations TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_documents_symbol ON documents(symbol_name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_documents_project_path ON documents(project_id, relative_path);
@@ -601,8 +604,12 @@ def add_project_version_filters(
     if ar_version and ar_version.strip():
         filters.append("lower(p.automation_runtime_versions) LIKE ?")
         parameters.append(f"%{ar_version.strip().casefold()}%")
+        filters.append("(d.target_ar_versions = '[]' OR lower(d.target_ar_versions) LIKE ?)")
+        parameters.append(f"%{ar_version.strip().casefold()}%")
     if cpu_model and cpu_model.strip():
         filters.append("lower(p.cpu_models) LIKE ?")
+        parameters.append(f"%{cpu_model.strip().casefold()}%")
+        filters.append("(d.target_cpu_models = '[]' OR lower(d.target_cpu_models) LIKE ?)")
         parameters.append(f"%{cpu_model.strip().casefold()}%")
     if library and library.strip():
         filters.append("lower(p.metadata_json) LIKE ?")
@@ -667,6 +674,17 @@ class CodeSearchIndex:
         for name, definition in task_migrations.items():
             if name not in task_columns:
                 connection.execute(f"ALTER TABLE tasks ADD COLUMN {name} {definition}")
+        document_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(documents)").fetchall()
+        }
+        document_migrations = {
+            "target_cpu_models": "TEXT NOT NULL DEFAULT '[]'",
+            "target_ar_versions": "TEXT NOT NULL DEFAULT '[]'",
+            "target_configurations": "TEXT NOT NULL DEFAULT '[]'",
+        }
+        for name, definition in document_migrations.items():
+            if name not in document_columns:
+                connection.execute(f"ALTER TABLE documents ADD COLUMN {name} {definition}")
 
     def _load_project_annotations(self) -> dict[str, dict[str, Any]]:
         if not self.project_metadata_path.exists():
@@ -907,12 +925,14 @@ class CodeSearchIndex:
                     continue
                 indexed_files += 1
                 indexed_documents += documents
+            self._refresh_document_target_metadata(connection, project_ids)
             meta = {
-                "schema_version": "6",
+                "schema_version": "7",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.5",
+                "tool_version": "0.4.6",
                 "task_enrichment_version": "1",
+                "document_target_enrichment_version": "1",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
@@ -993,6 +1013,7 @@ class CodeSearchIndex:
             added = changed = skipped = 0
             documents_added = 0
             task_enrichment_pending = meta.get("task_enrichment_version") != "1"
+            target_enrichment_dirty = meta.get("document_target_enrichment_version") != "1"
             for path in sorted(root.rglob("*")):
                 if not path.is_file() or not _should_index(path, root):
                     continue
@@ -1017,6 +1038,7 @@ class CodeSearchIndex:
                     changed += 1
                 else:
                     added += 1
+                target_enrichment_dirty = True
                 try:
                     self._remove_file_documents(connection, *key)
                     count, _encoding = self._index_file(
@@ -1032,15 +1054,20 @@ class CodeSearchIndex:
             ]
             for key in stale:
                 self._remove_file_documents(connection, *key)
+            if stale:
+                target_enrichment_dirty = True
             for project_root, project_id in list(existing_projects.items()):
                 if project_root not in project_ids:
                     connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
+            if target_enrichment_dirty:
+                self._refresh_document_target_metadata(connection, project_ids)
             meta.update({
-                "schema_version": "6",
+                "schema_version": "7",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.5",
+                "tool_version": "0.4.6",
                 "task_enrichment_version": "1",
+                "document_target_enrichment_version": "1",
             })
             connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
@@ -1078,6 +1105,10 @@ class CodeSearchIndex:
             verified_projects = connection.execute(
                 "SELECT COUNT(*) FROM projects WHERE verified=1"
             ).fetchone()[0]
+            target_documents = connection.execute(
+                """SELECT COUNT(*) FROM documents
+                WHERE target_cpu_models != '[]' OR target_ar_versions != '[]' OR target_configurations != '[]'"""
+            ).fetchone()[0]
         return {
             "ok": True,
             "indexed": bool(meta.get("indexed_at")),
@@ -1091,6 +1122,7 @@ class CodeSearchIndex:
             "documents_by_origin": origins,
             "projects_by_quality": quality_counts,
             "verified_projects": verified_projects,
+            "target_documents": target_documents,
         }
 
     @staticmethod
@@ -1116,6 +1148,16 @@ class CodeSearchIndex:
         if "project_version" in row.keys():
             payload["project_version"] = row["project_version"]
         for column, output in (("automation_runtime_versions", "ar_versions"), ("cpu_models", "cpu_models")):
+            if column in row.keys():
+                try:
+                    payload[output] = json.loads(row[column] or "[]")
+                except (TypeError, json.JSONDecodeError):
+                    payload[output] = []
+        for column, output in (
+            ("target_cpu_models", "target_cpu_models"),
+            ("target_ar_versions", "target_ar_versions"),
+            ("target_configurations", "target_configurations"),
+        ):
             if column in row.keys():
                 try:
                     payload[output] = json.loads(row[column] or "[]")
@@ -1240,6 +1282,7 @@ class CodeSearchIndex:
         candidate_limit = min(500, max(limit, limit * 5 if aggregate_files else limit))
         base_columns = """d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
             d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+            d.target_cpu_models, d.target_ar_versions, d.target_configurations,
             p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
             p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes"""
         rows_by_id: dict[int, sqlite3.Row] = {}
@@ -1342,6 +1385,7 @@ class CodeSearchIndex:
                 reference = connection.execute(
                     """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
                     d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                    d.target_cpu_models, d.target_ar_versions, d.target_configurations,
                     p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                     FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?""",
                     (int(reference_document_id),),
@@ -1390,6 +1434,7 @@ class CodeSearchIndex:
             rows = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                d.target_cpu_models, d.target_ar_versions, d.target_configurations,
                 p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN projects p ON p.id=d.project_id
@@ -1492,7 +1537,8 @@ class CodeSearchIndex:
         with closing(self.connect()) as connection, connection:
             rows = connection.execute(
                 f"""SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.target_cpu_models, d.target_ar_versions, d.target_configurations,
                 p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
@@ -1544,7 +1590,8 @@ class CodeSearchIndex:
         with closing(self.connect()) as connection, connection:
             primary = connection.execute(
                 """SELECT d.id, d.project_id, p.name AS project_name, d.relative_path, d.language,
-                d.origin, d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.origin, d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.target_cpu_models, d.target_ar_versions, d.target_configurations,
                 p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?""",
@@ -1556,7 +1603,8 @@ class CodeSearchIndex:
             prefix = "" if parent == "." else parent + "/"
             related = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.target_cpu_models, d.target_ar_versions, d.target_configurations,
                 p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
@@ -1620,9 +1668,8 @@ class CodeSearchIndex:
         }
 
     @staticmethod
-    def _tasks_for_path(
-        connection: sqlite3.Connection, project_id: int, relative_path: str
-    ) -> list[dict[str, Any]]:
+    def _task_source_candidates(relative_path: str) -> list[str]:
+        """Return Automation Studio module names that can own one source path."""
         parts = list(Path(relative_path).parts)
         try:
             logical_index = next(index for index, part in enumerate(parts) if part.casefold() == "logical")
@@ -1636,6 +1683,81 @@ class CodeSearchIndex:
             candidates.append(".".join([*module_parts, file_stem]).casefold())
         for end in range(len(module_parts), 0, -1):
             candidates.append(".".join(module_parts[:end]).casefold())
+        return candidates
+
+    def _refresh_document_target_metadata(
+        self,
+        connection: sqlite3.Connection,
+        project_roots: dict[Path, int],
+    ) -> int:
+        """Associate indexed units with nearest CPU packages and owning Task targets."""
+        roots_by_id = {project_id: root for root, project_id in project_roots.items()}
+        task_rows_by_project: dict[int, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            """SELECT project_id, source, cpu_model, automation_runtime_version, configuration_path
+            FROM tasks ORDER BY project_id, software_path"""
+        ):
+            task_rows_by_project.setdefault(int(row["project_id"]), []).append(row)
+        package_cache: dict[Path, dict[str, str | None]] = {}
+        documents = connection.execute(
+            "SELECT id, project_id, relative_path FROM documents ORDER BY project_id, relative_path, id"
+        ).fetchall()
+        updated = 0
+        for document in documents:
+            project_id = int(document["project_id"])
+            project_root = roots_by_id.get(project_id)
+            if project_root is None:
+                continue
+            cpu_models: set[str] = set()
+            ar_versions: set[str] = set()
+            configurations: set[str] = set()
+            source_path = project_root / document["relative_path"]
+            package_path = find_cpu_package(source_path)
+            if package_path is not None:
+                package_key = package_path.resolve()
+                if package_key not in package_cache:
+                    package_cache[package_key] = parse_cpu_package(package_key)
+                package_info = package_cache[package_key]
+                if package_info.get("cpu_model"):
+                    cpu_models.add(str(package_info["cpu_model"]))
+                if package_info.get("automation_runtime_version"):
+                    ar_versions.add(str(package_info["automation_runtime_version"]))
+                try:
+                    configurations.add(package_key.relative_to(project_root).as_posix())
+                except ValueError:
+                    pass
+            candidates = self._task_source_candidates(document["relative_path"])
+            for task in task_rows_by_project.get(project_id, []):
+                source_stem = Path(task["source"] or "").stem.casefold()
+                if not source_stem or not any(
+                    source_stem == candidate or source_stem.endswith("." + candidate)
+                    for candidate in candidates
+                ):
+                    continue
+                if task["cpu_model"]:
+                    cpu_models.add(str(task["cpu_model"]))
+                if task["automation_runtime_version"]:
+                    ar_versions.add(str(task["automation_runtime_version"]))
+                if task["configuration_path"]:
+                    configurations.add(str(task["configuration_path"]))
+            connection.execute(
+                """UPDATE documents SET target_cpu_models=?, target_ar_versions=?, target_configurations=?
+                WHERE id=?""",
+                (
+                    json.dumps(sorted(cpu_models), ensure_ascii=False),
+                    json.dumps(sorted(ar_versions), ensure_ascii=False),
+                    json.dumps(sorted(configurations), ensure_ascii=False),
+                    int(document["id"]),
+                ),
+            )
+            updated += 1
+        return updated
+
+    @staticmethod
+    def _tasks_for_path(
+        connection: sqlite3.Connection, project_id: int, relative_path: str
+    ) -> list[dict[str, Any]]:
+        candidates = CodeSearchIndex._task_source_candidates(relative_path)
         rows = connection.execute(
             """SELECT task_class, task_name, source, software_path, language, description, number, cycle_time_us,
             cpu_model, automation_runtime_version, configuration_path
@@ -1665,7 +1787,8 @@ class CodeSearchIndex:
         symbol_sql = ", ".join("?" for _ in TYPE_LIKE_SYMBOLS)
         rows = connection.execute(
             f"""SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-            d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+             d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+             d.target_cpu_models, d.target_ar_versions, d.target_configurations,
             p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes, d.project_id
             FROM documents d JOIN projects p ON p.id=d.project_id
             WHERE lower(d.symbol_name) IN ({name_sql}) AND d.symbol_type IN ({symbol_sql})
@@ -1748,7 +1871,8 @@ class CodeSearchIndex:
         with closing(self.connect()) as connection, connection:
             rows = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.target_cpu_models, d.target_ar_versions, d.target_configurations,
                 p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
@@ -1777,7 +1901,8 @@ class CodeSearchIndex:
         with closing(self.connect()) as connection, connection:
             rows = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                 d.target_cpu_models, d.target_ar_versions, d.target_configurations,
                 p.as_version, p.project_version, p.automation_runtime_versions, p.cpu_models, p.metadata_json,
                 p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
@@ -1821,6 +1946,9 @@ class CodeSearchIndex:
                             "as_version": row["as_version"],
                             "ar_versions": json.loads(row["automation_runtime_versions"] or "[]"),
                             "cpu_models": json.loads(row["cpu_models"] or "[]"),
+                            "target_cpu_models": json.loads(row["target_cpu_models"] or "[]"),
+                            "target_ar_versions": json.loads(row["target_ar_versions"] or "[]"),
+                            "target_configurations": json.loads(row["target_configurations"] or "[]"),
                             "line": absolute_line,
                             "text": line.strip()[:500],
                             "relation": relation,

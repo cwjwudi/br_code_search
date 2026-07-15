@@ -210,6 +210,40 @@ class IndexTests(unittest.TestCase):
         self.assertEqual("lexical_structural", similar["mode"])
         self.assertLessEqual(similar["count"], 3)
 
+    def test_target_aware_filters_for_multi_target_project(self) -> None:
+        project = self.source / "MultiTarget"
+        (project / "Logical" / "ModuleA").mkdir(parents=True)
+        (project / "Logical" / "ModuleB").mkdir(parents=True)
+        (project / "MultiTarget.apj").write_text(
+            '<?xml version="1.0"?><?AutomationStudio Version="6.0"?><Project Version="1.0" />',
+            encoding="utf-8",
+        )
+        for name, model, ar, module in (
+            ("TargetA", "X20CP1000", "A4.10", "ModuleA"),
+            ("TargetB", "X20CP2000", "B4.10", "ModuleB"),
+        ):
+            target = project / "Physical" / name
+            target.mkdir(parents=True)
+            (target / "Cpu.pkg").write_text(
+                f'<Cpu><Configuration ModuleId="{model}"><AutomationRuntime Version="{ar}" /></Configuration></Cpu>',
+                encoding="utf-8",
+            )
+            (target / "Cpu.sw").write_text(
+                f'<Software><TaskClass Name="Cyclic"><Task Name="{name}" Source="{module}.Program.prg" /></TaskClass></Software>',
+                encoding="utf-8",
+            )
+            (project / "Logical" / module / "Program.st").write_text(
+                f"PROGRAM {name}Program\nTargetOnly{name} := TRUE;\nEND_PROGRAM\n", encoding="utf-8"
+            )
+        self.index.rebuild(self.source)
+        only_a = self.index.search("TargetOnlyTargetA", project="MultiTarget", cpu_model="X20CP1000")
+        self.assertEqual(1, only_a["count"])
+        self.assertEqual(["X20CP1000"], only_a["results"][0]["target_cpu_models"])
+        self.assertEqual(0, self.index.search("TargetOnlyTargetA", project="MultiTarget", cpu_model="X20CP2000")["count"])
+        only_b = self.index.find_symbol("TargetBProgram", project="MultiTarget", cpu_model="X20CP2000")
+        self.assertEqual(1, only_b["count"])
+        self.assertEqual(["B4.10"], only_b["results"][0]["target_ar_versions"])
+
     def test_project_annotations_filter_results(self) -> None:
         annotation = self.index.annotate_project(
             "ProjectA", quality="gold", verified=True, notes="现场验证通过"

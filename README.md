@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.4.5`.
+Current release: `0.4.6`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -96,6 +96,10 @@ retaining their symbol and unit metadata.
 `br_get_task_configuration` and CLI `tasks` can additionally filter by the
 exact task CPU model and Automation Runtime version discovered from its nearby
 `Cpu.pkg`.
+Document results also expose `target_cpu_models`, `target_ar_versions` and
+`target_configurations`. CPU/AR filters use these target associations when a
+source unit belongs to a specific physical target, while shared logical units
+remain eligible when no target assignment can be inferred.
 
 `br_get_program_context` is the preferred tool before an AI writes code. It
 returns the matched source plus related `Init`, `Cyclic`, `Exit`, action,
@@ -113,6 +117,10 @@ cross-reference analysis. Cycle values are returned only when an explicit cycle/
 attribute exists in the source configuration. Parse fallbacks are exposed
 as ordinary file units so source remains searchable even when a dialect is not
 recognized.
+
+For multi-target Automation Studio projects, target metadata is inferred from
+the nearest `Cpu.pkg`/`Config.pkg` and from `.sw` Task-to-program assignments.
+This is path and configuration metadata, not a compiler-grade build graph.
 
 The similarity tool is deliberately labeled `lexical_structural`: it uses
 identifier/control-token overlap with language and symbol-kind boosts. It is a

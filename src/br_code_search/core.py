@@ -930,7 +930,7 @@ class CodeSearchIndex:
                 "schema_version": "7",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.6",
+                "tool_version": "0.4.7",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             }
@@ -1065,7 +1065,7 @@ class CodeSearchIndex:
                 "schema_version": "7",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.4.6",
+                "tool_version": "0.4.7",
                 "task_enrichment_version": "1",
                 "document_target_enrichment_version": "1",
             })

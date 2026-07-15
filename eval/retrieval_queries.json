@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "name": "B&R reference retrieval smoke set",
+  "description": "Path/symbol-only labels for the checked-in reference corpus; no source code is copied into this dataset.",
+  "queries": [
+    {
+      "id": "cam-sequence-exact-search",
+      "operation": "search",
+      "query": "cam sequence",
+      "relevant": [
+        {
+          "path": "Logical/T2010_Pump_Lift/FillerCtrl/LocalFunctions.fun",
+          "symbol": "fcPreFlowCamSeq"
+        }
+      ],
+      "notes": "Natural-language control-logic query should retrieve the FillerCtrl sequence functions."
+    },
+    {
+      "id": "opcua-search",
+      "operation": "search",
+      "query": "OPC UA",
+      "relevant": [
+        {
+          "path": "Logical/StdCode/Libraries/CH_OpcUa/CH_OpcUa.fun",
+          "symbol": "CH_OpcUaConnect"
+        }
+      ]
+    },
+    {
+      "id": "target-aware-actuator-search",
+      "operation": "search",
+      "query": "actCalcCtrl",
+      "filters": {
+        "cpu_model": "X20CP1585",
+        "ar_version": "J4.25"
+      },
+      "relevant": [
+        {
+          "path": "Logical/T2010_Pump_Lift/FillerCtrl/actCalcCtrl.st",
+          "symbol": "actCalcCtrl",
+          "target_cpu_models": "X20CP1585"
+        }
+      ],
+      "notes": "Verifies target-aware filtering of a logical source unit."
+    },
+    {
+      "id": "cam-sequence-similar",
+      "operation": "similar",
+      "query": "cam sequence",
+      "relevant": [
+        {
+          "path": "Logical/T2010_Pump_Lift/FillerCtrl/LocalFunctions.fun",
+          "symbol": "fcPreFlowCamSeq"
+        }
+      ]
+    },
+    {
+      "id": "fb-home-master-symbol",
+      "operation": "find_symbol",
+      "query": "fbHomeMaster",
+      "relevant": [
+        {
+          "path": "Logical/Libraries/Hibar/fbHomeMaster.st",
+          "symbol": "fbHomeMaster"
+        }
+      ],
+      "notes": "The implementation unit is preferred over similarly named variable declarations."
+    },
+    {
+      "id": "mp-axis-basic-symbol",
+      "operation": "find_symbol",
+      "query": "MpAxisBasic",
+      "relevant": [
+        {
+          "path": "Logical/Libraries/MpAxis/MpAxis.fun",
+          "symbol": "MpAxisBasic",
+          "symbol_type": "function_block"
+        }
+      ]
+    },
+    {
+      "id": "cam-function-symbol",
+      "operation": "find_symbol",
+      "query": "fcPreFlowCamSeq",
+      "relevant": [
+        {
+          "path": "Logical/T2010_Pump_Lift/FillerCtrl/LocalFunctions.fun",
+          "symbol": "fcPreFlowCamSeq"
+        }
+      ]
+    },
+    {
+      "id": "opcua-function-block-symbol",
+      "operation": "find_symbol",
+      "query": "CH_OpcUaConnect",
+      "relevant": [
+        {
+          "path": "Logical/StdCode/Libraries/CH_OpcUa/CH_OpcUa.fun",
+          "symbol": "CH_OpcUaConnect"
+        }
+      ]
+    }
+  ]
+}

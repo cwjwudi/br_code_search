@@ -4,7 +4,7 @@
 Studio projects. It indexes B&R source units into SQLite/FTS5 and exposes them
 to AI clients through an independent stdio MCP server.
 
-Current release: `0.4.6`.
+Current release: `0.4.7`.
 
 The reference repository is never modified. Generated indexes are written to
 this tool's `var/` directory by default.
@@ -38,6 +38,7 @@ python -m br_code_search.cli type MC_ACP_ENCOD_REF
 python -m br_code_search.cli references Ready --limit 20
 python -m br_code_search.cli annotate-project "2406长虹飞狮" --quality gold --verified --notes "现场验证通过"
 python -m br_code_search.cli search MpAxisBasic --quality gold --verified-only --origin user
+python -m br_code_search.cli evaluate eval/retrieval_queries.json --top-k 5
 ```
 
 Start the MCP server:
@@ -77,6 +78,7 @@ Example MCP client configuration:
 
 - `br_index_codebase`: synchronize or rebuild the local index from the configured source root
 - `br_get_index_status`: return index statistics and configured paths
+- `br_evaluate_retrieval`: run a versioned JSON query set and report Hit@K/MRR
 - `br_annotate_project`: persist project quality and verification metadata outside the source repository
 - `br_search_code`: full-text and exact source search
 - `br_find_similar_code`: lightweight lexical/structural neighbor search
@@ -131,3 +133,8 @@ Project quality annotations are stored beside the index at
 `deprecated`; search defaults exclude projects marked `deprecated` or
 `do_not_copy`, and `verified_only=true` restricts results to explicitly
 verified projects.
+
+Retrieval evaluation datasets use path/symbol labels rather than copying source
+code. Run the bundled baseline with `br_code_search.cli evaluate`; the same
+dataset can be passed to the MCP `br_evaluate_retrieval` tool. The report
+includes per-case first-hit rank, Hit@1/3/5/10 (where evaluated) and MRR.

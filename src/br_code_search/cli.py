@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .core import CodeSearchIndex
+from .evaluation import evaluate_dataset
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -124,6 +125,16 @@ def build_parser() -> argparse.ArgumentParser:
     annotate.add_argument("--deprecated", action="store_true")
     annotate.add_argument("--do-not-copy", action="store_true")
     annotate.add_argument("--notes", default="")
+
+    evaluate = subparsers.add_parser("evaluate", help="Evaluate retrieval quality against a versioned JSON dataset")
+    evaluate.add_argument(
+        "dataset",
+        nargs="?",
+        default=str(REPO_ROOT / "eval" / "retrieval_queries.json"),
+        help="Evaluation JSON path (defaults to the bundled example dataset)",
+    )
+    evaluate.add_argument("--top-k", type=int, default=5)
+    evaluate.add_argument("--max-cases", type=int)
     return parser
 
 
@@ -206,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
             result = index.get_type_definition(args.type_name, project=args.project)
         elif args.command == "references":
             result = index.find_references(args.name, project=args.project, limit=args.limit)
+        elif args.command == "evaluate":
+            result = evaluate_dataset(index, args.dataset, top_k=args.top_k, max_cases=args.max_cases)
         else:
             result = index.annotate_project(
                 args.project,

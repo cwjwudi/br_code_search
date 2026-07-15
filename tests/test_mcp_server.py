@@ -52,6 +52,26 @@ class McpServerTests(unittest.TestCase):
             )
             self.assertFalse(indexed["result"]["isError"])
 
+            dataset = root / "queries.json"
+            dataset.write_text(
+                '{"version": 1, "queries": [{"id": "search-me", "operation": "search", '
+                '"query": "SearchMe", "relevant": [{"path": "Logical/Cyclic.st", "symbol": "SearchMe"}]}]}',
+                encoding="utf-8",
+            )
+            evaluated = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 31,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_evaluate_retrieval",
+                        "arguments": {"dataset_path": str(dataset), "top_k": 3},
+                    },
+                }
+            )
+            self.assertFalse(evaluated["result"]["isError"])
+            self.assertEqual(1.0, evaluated["result"]["structuredContent"]["mrr"])
+
             searched = server.handle(
                 {
                     "jsonrpc": "2.0",

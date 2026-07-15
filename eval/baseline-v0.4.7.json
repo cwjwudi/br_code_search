@@ -1,0 +1,23 @@
+{
+  "release": "0.4.7",
+  "dataset": "retrieval_queries.json",
+  "top_k": 5,
+  "query_count": 8,
+  "hit_at_k": {
+    "1": {"hits": 7, "evaluated": 8, "rate": 0.875},
+    "3": {"hits": 8, "evaluated": 8, "rate": 1.0},
+    "5": {"hits": 8, "evaluated": 8, "rate": 1.0}
+  },
+  "mrr": 0.9375,
+  "first_relevant_rank": {
+    "cam-sequence-exact-search": 1,
+    "opcua-search": 1,
+    "target-aware-actuator-search": 1,
+    "cam-sequence-similar": 1,
+    "fb-home-master-symbol": 2,
+    "mp-axis-basic-symbol": 1,
+    "cam-function-symbol": 1,
+    "opcua-function-block-symbol": 1
+  },
+  "note": "Baseline generated from the supplied three-project reference corpus; labels contain no source code."
+}

@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from . import __version__
 from .core import CodeSearchIndex
+from .evaluation import evaluate_dataset
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +76,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "br_get_index_status",
         "description": "Return index paths, timestamp, project/file counts, source classifications and target-association coverage.",
         "inputSchema": object_schema({}),
+    },
+    {
+        "name": "br_evaluate_retrieval",
+        "description": "Run a versioned JSON retrieval dataset and report Hit@K/MRR without modifying the source repository.",
+        "inputSchema": object_schema(
+            {
+                "dataset_path": {"type": "string", "minLength": 1},
+                "top_k": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5},
+                "max_cases": {"type": "integer", "minimum": 1},
+            },
+            ["dataset_path"],
+        ),
     },
     {
         "name": "br_annotate_project",
@@ -230,6 +243,12 @@ class McpServer:
         calls: dict[str, Callable[[], dict[str, Any]]] = {
             "br_index_codebase": index_codebase,
             "br_get_index_status": self.index.status,
+            "br_evaluate_retrieval": lambda: evaluate_dataset(
+                self.index,
+                arguments["dataset_path"],
+                top_k=arguments.get("top_k", 5),
+                max_cases=arguments.get("max_cases"),
+            ),
             "br_annotate_project": lambda: self.index.annotate_project(
                 arguments["project"],
                 quality=arguments.get("quality", "normal"),

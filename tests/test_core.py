@@ -132,6 +132,24 @@ class IndexTests(unittest.TestCase):
         self.assertEqual("lexical_structural", similar["mode"])
         self.assertLessEqual(similar["count"], 3)
 
+    def test_project_annotations_filter_results(self) -> None:
+        annotation = self.index.annotate_project(
+            "ProjectA", quality="gold", verified=True, notes="现场验证通过"
+        )
+        self.assertTrue(annotation["verified"])
+        self.assertTrue(self.index.project_metadata_path.exists())
+        filtered = self.index.search("DemoProgram", quality="gold", verified_only=True)
+        self.assertEqual(1, filtered["count"])
+        self.assertEqual("gold", filtered["results"][0]["quality"])
+        self.assertTrue(filtered["results"][0]["verified"])
+        self.index.rebuild(self.source)
+        overview = self.index.project_overview("ProjectA")
+        self.assertEqual("gold", overview["quality"])
+        self.assertTrue(overview["verified"])
+        self.index.annotate_project("ProjectA", quality="deprecated", do_not_copy=True)
+        self.assertEqual(0, self.index.search("DemoProgram")["count"])
+        self.assertEqual(1, self.index.search("DemoProgram", quality="deprecated")["count"])
+
 
 if __name__ == "__main__":
     unittest.main()

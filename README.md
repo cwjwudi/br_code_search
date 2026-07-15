@@ -29,6 +29,8 @@ python -m br_code_search.cli status
 python -m br_code_search.cli search MpAxisBasic --origin user
 python -m br_code_search.cli find-symbol fbHomeMaster
 python -m br_code_search.cli similar "timeout reset alarm cylinder" --origin user
+python -m br_code_search.cli annotate-project "2406长虹飞狮" --quality gold --verified --notes "现场验证通过"
+python -m br_code_search.cli search MpAxisBasic --quality gold --verified-only --origin user
 ```
 
 Start the MCP server:
@@ -68,6 +70,7 @@ Example MCP client configuration:
 
 - `br_index_codebase`: synchronize or rebuild the local index from the configured source root
 - `br_get_index_status`: return index statistics and configured paths
+- `br_annotate_project`: persist project quality and verification metadata outside the source repository
 - `br_search_code`: full-text and exact source search
 - `br_find_similar_code`: lightweight lexical/structural neighbor search
 - `br_find_symbol`: exact or prefix symbol lookup
@@ -91,3 +94,9 @@ recognized.
 The similarity tool is deliberately labeled `lexical_structural`: it uses
 identifier/control-token overlap with language and symbol-kind boosts. It is a
 stable intermediate step, not a replacement for future embedding search.
+
+Project quality annotations are stored beside the index at
+`var/project_metadata.json`. Supported quality values are `gold`, `normal` and
+`deprecated`; search defaults exclude projects marked `deprecated` or
+`do_not_copy`, and `verified_only=true` restricts results to explicitly
+verified projects.

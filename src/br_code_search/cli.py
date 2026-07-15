@@ -47,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--project")
     search.add_argument("--origin", choices=["all", "user", "library", "physical"], default="all")
     search.add_argument("--language")
+    search.add_argument("--quality", choices=["gold", "normal", "deprecated"])
+    search.add_argument("--verified-only", action="store_true")
+    search.add_argument("--include-deprecated", action="store_true")
     search.add_argument("--limit", type=int, default=10)
     search.add_argument("--no-source", action="store_true")
 
@@ -54,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     symbol.add_argument("name")
     symbol.add_argument("--project")
     symbol.add_argument("--type", dest="symbol_type")
+    symbol.add_argument("--quality", choices=["gold", "normal", "deprecated"])
+    symbol.add_argument("--verified-only", action="store_true")
+    symbol.add_argument("--include-deprecated", action="store_true")
     symbol.add_argument("--limit", type=int, default=20)
 
     get = subparsers.add_parser("get-symbol", help="Get a source unit by document id")
@@ -70,11 +76,22 @@ def build_parser() -> argparse.ArgumentParser:
     similar.add_argument("--project")
     similar.add_argument("--origin", choices=["all", "user", "library", "physical"], default="all")
     similar.add_argument("--language")
+    similar.add_argument("--quality", choices=["gold", "normal", "deprecated"])
+    similar.add_argument("--verified-only", action="store_true")
+    similar.add_argument("--include-deprecated", action="store_true")
     similar.add_argument("--limit", type=int, default=10)
     similar.add_argument("--no-source", action="store_true")
 
     overview = subparsers.add_parser("overview", help="Show one project's indexed structure")
     overview.add_argument("project")
+
+    annotate = subparsers.add_parser("annotate-project", help="Persist project quality metadata")
+    annotate.add_argument("project")
+    annotate.add_argument("--quality", choices=["gold", "normal", "deprecated"], default="normal")
+    annotate.add_argument("--verified", action="store_true")
+    annotate.add_argument("--deprecated", action="store_true")
+    annotate.add_argument("--do-not-copy", action="store_true")
+    annotate.add_argument("--notes", default="")
     return parser
 
 
@@ -94,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
                 project=args.project,
                 origin=args.origin,
                 language=args.language,
+                quality=args.quality,
+                verified_only=args.verified_only,
+                include_deprecated=args.include_deprecated,
                 limit=args.limit,
                 include_source=not args.no_source,
             )
@@ -102,6 +122,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.name,
                 project=args.project,
                 symbol_type=args.symbol_type,
+                quality=args.quality,
+                verified_only=args.verified_only,
+                include_deprecated=args.include_deprecated,
                 limit=args.limit,
             )
         elif args.command == "get-symbol":
@@ -115,11 +138,23 @@ def main(argv: list[str] | None = None) -> int:
                 project=args.project,
                 origin=args.origin,
                 language=args.language,
+                quality=args.quality,
+                verified_only=args.verified_only,
+                include_deprecated=args.include_deprecated,
                 limit=args.limit,
                 include_source=not args.no_source,
             )
-        else:
+        elif args.command == "overview":
             result = index.project_overview(args.project)
+        else:
+            result = index.annotate_project(
+                args.project,
+                quality=args.quality,
+                verified=args.verified,
+                deprecated=args.deprecated,
+                do_not_copy=args.do_not_copy,
+                notes=args.notes,
+            )
     except (OSError, ValueError) as exc:
         print_json({"ok": False, "error": str(exc)})
         return 1

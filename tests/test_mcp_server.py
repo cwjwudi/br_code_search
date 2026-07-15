@@ -68,6 +68,20 @@ class McpServerTests(unittest.TestCase):
             self.assertFalse(similar["result"]["isError"])
             self.assertEqual("lexical_structural", similar["result"]["structuredContent"]["mode"])
 
+            annotated = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 6,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "br_annotate_project",
+                        "arguments": {"project": "Sample", "quality": "gold", "verified": True},
+                    },
+                }
+            )
+            self.assertFalse(annotated["result"]["isError"])
+            self.assertEqual("gold", annotated["result"]["structuredContent"]["quality"])
+
 
 if __name__ == "__main__":
     unittest.main()

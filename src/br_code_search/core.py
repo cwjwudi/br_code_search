@@ -56,7 +56,12 @@ CREATE TABLE IF NOT EXISTS projects (
     as_version TEXT,
     project_version TEXT,
     description TEXT,
-    metadata_json TEXT NOT NULL DEFAULT '{}'
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    quality TEXT NOT NULL DEFAULT 'normal',
+    verified INTEGER NOT NULL DEFAULT 0,
+    deprecated INTEGER NOT NULL DEFAULT 0,
+    do_not_copy INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY,
@@ -335,6 +340,7 @@ def _should_index(path: Path, source_root: Path) -> bool:
 class CodeSearchIndex:
     def __init__(self, database_path: str | Path):
         self.database_path = Path(database_path).expanduser().resolve()
+        self.project_metadata_path = self.database_path.parent / "project_metadata.json"
 
     def connect(self) -> sqlite3.Connection:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -345,6 +351,85 @@ class CodeSearchIndex:
 
     def _initialize(self, connection: sqlite3.Connection) -> None:
         connection.executescript(SCHEMA)
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(projects)").fetchall()
+        }
+        migrations = {
+            "quality": "TEXT NOT NULL DEFAULT 'normal'",
+            "verified": "INTEGER NOT NULL DEFAULT 0",
+            "deprecated": "INTEGER NOT NULL DEFAULT 0",
+            "do_not_copy": "INTEGER NOT NULL DEFAULT 0",
+            "notes": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, definition in migrations.items():
+            if name not in columns:
+                connection.execute(f"ALTER TABLE projects ADD COLUMN {name} {definition}")
+
+    def _load_project_annotations(self) -> dict[str, dict[str, Any]]:
+        if not self.project_metadata_path.exists():
+            return {}
+        try:
+            value = json.loads(self.project_metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _project_annotation(self, project_name: str) -> dict[str, Any]:
+        value = self._load_project_annotations().get(project_name, {})
+        if not isinstance(value, dict):
+            return {}
+        quality = str(value.get("quality", "normal"))
+        if quality not in {"gold", "normal", "deprecated"}:
+            quality = "normal"
+        return {
+            "quality": quality,
+            "verified": bool(value.get("verified", False)),
+            "deprecated": bool(value.get("deprecated", quality == "deprecated")),
+            "do_not_copy": bool(value.get("do_not_copy", False)),
+            "notes": str(value.get("notes", "")),
+        }
+
+    def annotate_project(
+        self,
+        project: str,
+        *,
+        quality: str = "normal",
+        verified: bool = False,
+        deprecated: bool = False,
+        do_not_copy: bool = False,
+        notes: str = "",
+    ) -> dict[str, Any]:
+        if quality not in {"gold", "normal", "deprecated"}:
+            raise ValueError("quality must be one of: gold, normal, deprecated")
+        if quality == "deprecated":
+            deprecated = True
+        with closing(self.connect()) as connection, connection:
+            self._initialize(connection)
+            row = connection.execute(
+                "SELECT name FROM projects WHERE name=? COLLATE NOCASE", (project,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown project: {project}")
+        annotations = self._load_project_annotations()
+        annotations[project] = {
+            "quality": quality,
+            "verified": bool(verified),
+            "deprecated": bool(deprecated),
+            "do_not_copy": bool(do_not_copy),
+            "notes": notes,
+        }
+        self.project_metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        self.project_metadata_path.write_text(
+            json.dumps(annotations, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        with closing(self.connect()) as connection, connection:
+            self._initialize(connection)
+            connection.execute(
+                """UPDATE projects SET quality=?, verified=?, deprecated=?, do_not_copy=?, notes=?
+                WHERE name=? COLLATE NOCASE""",
+                (quality, int(verified), int(deprecated), int(do_not_copy), notes, project),
+            )
+        return {"ok": True, "project": project, "metadata_path": str(self.project_metadata_path), **annotations[project]}
 
     @staticmethod
     def _project_roots(root: Path) -> dict[Path, Path | None]:
@@ -433,13 +518,15 @@ class CodeSearchIndex:
             project_ids: dict[Path, int] = {}
             for project_root, project_file in project_roots.items():
                 metadata = parse_project_file(project_file) if project_file else {}
+                annotation = self._project_annotation(project_root.name)
                 relative_project_file = (
                     project_file.relative_to(project_root).as_posix() if project_file else None
                 )
                 cursor = connection.execute(
                     """INSERT INTO projects
-                    (name, root_path, project_file, as_version, project_version, description, metadata_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (name, root_path, project_file, as_version, project_version, description, metadata_json,
+                     quality, verified, deprecated, do_not_copy, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         project_root.name,
                         str(project_root),
@@ -448,6 +535,8 @@ class CodeSearchIndex:
                         metadata.get("project_version"),
                         metadata.get("description"),
                         json.dumps(metadata, ensure_ascii=False),
+                        annotation["quality"], int(annotation["verified"]), int(annotation["deprecated"]),
+                        int(annotation["do_not_copy"]), annotation["notes"],
                     ),
                 )
                 project_ids[project_root] = int(cursor.lastrowid)
@@ -477,10 +566,10 @@ class CodeSearchIndex:
                 indexed_files += 1
                 indexed_documents += documents
             meta = {
-                "schema_version": "2",
+                "schema_version": "3",
                 "source_root": str(root),
                 "indexed_at": utc_now(),
-                "tool_version": "0.2.0",
+                "tool_version": "0.3.0",
             }
             connection.executemany(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items()
@@ -520,25 +609,30 @@ class CodeSearchIndex:
             project_ids: dict[Path, int] = {}
             for project_root, project_file in project_roots.items():
                 metadata = parse_project_file(project_file) if project_file else {}
+                annotation = self._project_annotation(project_root.name)
                 relative_project_file = project_file.relative_to(project_root).as_posix() if project_file else None
                 project_id = existing_projects.get(project_root)
                 if project_id is None:
                     cursor = connection.execute(
                         """INSERT INTO projects
-                        (name, root_path, project_file, as_version, project_version, description, metadata_json)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (name, root_path, project_file, as_version, project_version, description, metadata_json,
+                         quality, verified, deprecated, do_not_copy, notes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (project_root.name, str(project_root), relative_project_file, metadata.get("as_version"),
                          metadata.get("project_version"), metadata.get("description"),
-                         json.dumps(metadata, ensure_ascii=False)),
+                         json.dumps(metadata, ensure_ascii=False), annotation["quality"], int(annotation["verified"]),
+                         int(annotation["deprecated"]), int(annotation["do_not_copy"]), annotation["notes"]),
                     )
                     project_id = int(cursor.lastrowid)
                 else:
                     connection.execute(
                         """UPDATE projects SET name=?, project_file=?, as_version=?, project_version=?,
-                        description=?, metadata_json=? WHERE id=?""",
+                        description=?, metadata_json=?, quality=?, verified=?, deprecated=?, do_not_copy=?, notes=?
+                        WHERE id=?""",
                         (project_root.name, relative_project_file, metadata.get("as_version"),
                          metadata.get("project_version"), metadata.get("description"),
-                         json.dumps(metadata, ensure_ascii=False), project_id),
+                         json.dumps(metadata, ensure_ascii=False), annotation["quality"], int(annotation["verified"]),
+                         int(annotation["deprecated"]), int(annotation["do_not_copy"]), annotation["notes"], project_id),
                     )
                 project_ids[project_root] = project_id
             current_keys: set[tuple[int, str]] = set()
@@ -584,7 +678,7 @@ class CodeSearchIndex:
             for project_root, project_id in list(existing_projects.items()):
                 if project_root not in project_ids:
                     connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
-            meta.update({"schema_version": "2", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.2.0"})
+            meta.update({"schema_version": "3", "source_root": str(root), "indexed_at": utc_now(), "tool_version": "0.3.0"})
             connection.executemany("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", meta.items())
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
@@ -610,6 +704,15 @@ class CodeSearchIndex:
                     "SELECT origin, COUNT(*) AS count FROM documents GROUP BY origin"
                 )
             }
+            quality_counts = {
+                row["quality"]: row["count"]
+                for row in connection.execute(
+                    "SELECT quality, COUNT(*) AS count FROM projects GROUP BY quality"
+                )
+            }
+            verified_projects = connection.execute(
+                "SELECT COUNT(*) FROM projects WHERE verified=1"
+            ).fetchone()[0]
         return {
             "ok": True,
             "indexed": bool(meta.get("indexed_at")),
@@ -620,6 +723,8 @@ class CodeSearchIndex:
             "files": files,
             "documents": documents,
             "documents_by_origin": origins,
+            "projects_by_quality": quality_counts,
+            "verified_projects": verified_projects,
         }
 
     @staticmethod
@@ -636,6 +741,10 @@ class CodeSearchIndex:
             "end_line": row["end_line"],
             "encoding": row["encoding"],
         }
+        for key in ("quality", "verified", "deprecated", "do_not_copy", "notes"):
+            if key in row.keys():
+                value = row[key]
+                payload[key] = bool(value) if key in {"verified", "deprecated", "do_not_copy"} else value
         if include_source:
             source = row["content"]
             payload["source"] = source[:max_chars]
@@ -653,6 +762,9 @@ class CodeSearchIndex:
         project: str | None = None,
         origin: str | None = None,
         language: str | None = None,
+        quality: str | None = None,
+        verified_only: bool = False,
+        include_deprecated: bool = False,
         limit: int = 10,
         include_source: bool = True,
         max_chars_per_result: int = 4000,
@@ -675,9 +787,17 @@ class CodeSearchIndex:
         if language:
             filters.append("d.language = ?")
             parameters.append(language)
+        if quality:
+            filters.append("p.quality = ?")
+            parameters.append(quality)
+        if verified_only:
+            filters.append("p.verified = 1")
+        if not include_deprecated and quality != "deprecated":
+            filters.append("p.deprecated = 0 AND p.do_not_copy = 0")
         filter_sql = (" AND " + " AND ".join(filters)) if filters else ""
         base_columns = """d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-            d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content"""
+            d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+            p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes"""
         rows_by_id: dict[int, sqlite3.Row] = {}
         with closing(self.connect()) as connection, connection:
             exact_rows = connection.execute(
@@ -724,6 +844,8 @@ class CodeSearchIndex:
         return {
             "ok": True,
             "query": query,
+            "filters": {"project": project, "origin": origin, "language": language, "quality": quality,
+                        "verified_only": verified_only, "include_deprecated": include_deprecated},
             "count": len(rows),
             "results": [
                 self._row_payload(row, include_source=include_source, max_chars=max_chars_per_result)
@@ -739,6 +861,9 @@ class CodeSearchIndex:
         project: str | None = None,
         origin: str | None = None,
         language: str | None = None,
+        quality: str | None = None,
+        verified_only: bool = False,
+        include_deprecated: bool = False,
         limit: int = 10,
         include_source: bool = True,
         max_chars_per_result: int = 4000,
@@ -750,7 +875,8 @@ class CodeSearchIndex:
             if reference_document_id is not None:
                 reference = connection.execute(
                     """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                    d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content
+                    d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                    p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                     FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?""",
                     (int(reference_document_id),),
                 ).fetchone()
@@ -776,12 +902,20 @@ class CodeSearchIndex:
             if language:
                 filters.append("d.language = ?")
                 params.append(language)
+            if quality:
+                filters.append("p.quality = ?")
+                params.append(quality)
+            if verified_only:
+                filters.append("p.verified = 1")
+            if not include_deprecated and quality != "deprecated":
+                filters.append("p.deprecated = 0 AND p.do_not_copy = 0")
             if reference is not None:
                 filters.append("d.id <> ?")
                 params.append(int(reference_document_id))
             rows = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content
+                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN projects p ON p.id=d.project_id
                 WHERE documents_fts MATCH ?""" + (" AND " + " AND ".join(filters) if filters else "") +
                 " ORDER BY bm25(documents_fts) LIMIT 500",
@@ -823,6 +957,8 @@ class CodeSearchIndex:
             "mode": "lexical_structural",
             "query": query if reference is None else None,
             "reference_document_id": reference_document_id,
+            "filters": {"project": project, "origin": origin, "language": language, "quality": quality,
+                        "verified_only": verified_only, "include_deprecated": include_deprecated},
             "count": len(results),
             "results": results,
             "note": "Scores use identifier/control-token overlap plus language and symbol-kind boosts; this is not embedding search.",
@@ -834,6 +970,9 @@ class CodeSearchIndex:
         *,
         project: str | None = None,
         symbol_type: str | None = None,
+        quality: str | None = None,
+        verified_only: bool = False,
+        include_deprecated: bool = False,
         limit: int = 20,
     ) -> dict[str, Any]:
         self._ensure_index()
@@ -845,10 +984,18 @@ class CodeSearchIndex:
         if symbol_type:
             filters.append("d.symbol_type = ? COLLATE NOCASE")
             params.append(symbol_type)
+        if quality:
+            filters.append("p.quality = ?")
+            params.append(quality)
+        if verified_only:
+            filters.append("p.verified = 1")
+        if not include_deprecated and quality != "deprecated":
+            filters.append("p.deprecated = 0 AND p.do_not_copy = 0")
         with closing(self.connect()) as connection, connection:
             rows = connection.execute(
                 f"""SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content
+                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
                 WHERE {' AND '.join(filters)}
                 ORDER BY CASE WHEN d.symbol_name = ? COLLATE NOCASE THEN 0 ELSE 1 END,
@@ -868,7 +1015,8 @@ class CodeSearchIndex:
         with closing(self.connect()) as connection, connection:
             row = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content
+                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?""",
                 (int(document_id),),
             ).fetchone()
@@ -882,7 +1030,8 @@ class CodeSearchIndex:
         with closing(self.connect()) as connection, connection:
             primary = connection.execute(
                 """SELECT d.id, d.project_id, p.name AS project_name, d.relative_path, d.language,
-                d.origin, d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content
+                d.origin, d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?""",
                 (int(document_id),),
             ).fetchone()
@@ -892,7 +1041,8 @@ class CodeSearchIndex:
             prefix = "" if parent == "." else parent + "/"
             related = connection.execute(
                 """SELECT d.id, p.name AS project_name, d.relative_path, d.language, d.origin,
-                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content
+                d.symbol_name, d.symbol_type, d.start_line, d.end_line, d.encoding, d.content,
+                p.quality, p.verified, p.deprecated, p.do_not_copy, p.notes
                 FROM documents d JOIN projects p ON p.id=d.project_id
                 WHERE d.project_id=? AND d.id<>? AND d.relative_path LIKE ?
                 ORDER BY CASE d.symbol_type
@@ -921,7 +1071,7 @@ class CodeSearchIndex:
             "related_context": context,
             "context_chars": used,
             "context_truncated": used >= budget,
-            "note": "Related context is directory-based in v0.1 and is not a compiler-grade dependency graph.",
+            "note": "Related context is directory-based in v0.3 and is not a compiler-grade dependency graph.",
         }
 
     def project_overview(self, project: str) -> dict[str, Any]:
@@ -965,6 +1115,12 @@ class CodeSearchIndex:
             "as_version": row["as_version"],
             "project_version": row["project_version"],
             "description": row["description"],
+            "quality": row["quality"],
+            "verified": bool(row["verified"]),
+            "deprecated": bool(row["deprecated"]),
+            "do_not_copy": bool(row["do_not_copy"]),
+            "notes": row["notes"],
+            "metadata_path": str(self.project_metadata_path),
             "metadata": json.loads(row["metadata_json"]),
             "documents_by_type": type_counts,
             "documents_by_language": language_counts,
